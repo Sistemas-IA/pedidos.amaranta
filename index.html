@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pedidos Amaranta</title>
+<meta name="robots" content="noindex,nofollow" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Lora:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/styles.css" />
+</head>
+<body>
+<header class="site-header"><img src="./assets/logo.svg" alt="Amaranta" class="logo" /></header>
+<main>
+  <section id="login" class="panel">
+    <h1>Ingresá a tu cuenta</h1>
+    <p class="muted">Usá tu DNI y clave asignada. (No se envían en la URL)</p>
+    <form id="loginForm" class="form" autocomplete="off">
+      <label class="field"><span>DNI</span><input type="text" name="dni" inputmode="numeric" autocomplete="username" required /></label>
+      <label class="field"><span>Clave</span><input type="password" name="clave" autocomplete="current-password" required /></label>
+      <button type="submit" class="btn primary">Ingresar</button>
+      <p id="loginMsg" class="msg"></p>
+    </form>
+    <div id="closed" class="closed hidden">Pedidos cerrados por hoy.</div>
+  </section>
+
+  <section id="menu" class="panel">
+    <div class="tabs"><div class="chip active">Viandas del día</div></div>
+    <div id="lock" class="lock">Iniciá sesión para ver las viandas del día.</div>
+    <div id="listado" class="listado">
+      <div class="card skeleton"><div class="img-wrap skeleton-box"></div><div class="card-body"><div class="s1 skeleton-box"></div><div class="s2 skeleton-box"></div><div class="s3 skeleton-box"></div></div></div>
+      <div class="card skeleton"><div class="img-wrap skeleton-box"></div><div class="card-body"><div class="s1 skeleton-box"></div><div class="s2 skeleton-box"></div><div class="s3 skeleton-box"></div></div></div>
+    </div>
+    <div class="comentarios-wrap">
+      <label class="field"><span>Aclaraciones (dirección, preferencias, etc.)</span><textarea id="comentarios" rows="3" placeholder="Opcional" disabled></textarea></label>
+    </div>
+    <div class="resumen">
+      <h2>Revisá tu pedido</h2>
+      <div id="resumenItems" class="resumen-items"></div>
+      <div class="resumen-total"><span>Total</span><strong id="total">$ 0,00</strong></div>
+      <div class="alias"><span>Alias para pagar</span><div class="alias-row"><code id="alias">—</code><button class="btn ghost" id="copyAlias" disabled>Copiar</button></div></div>
+      <button id="enviarPedido" class="btn primary" disabled>Enviar pedido</button>
+      <p id="pedidoMsg" class="msg"></p>
+    </div>
+  </section>
+</main>
+<div class="bottom-bar"><button id="reiniciar" class="link" disabled>Reiniciar</button><div class="spacer"></div><div class="cart"><span class="icon-bag" aria-hidden="true">🛍️</span><strong id="totalBar">$ 0,00</strong></div></div>
+<dialog id="modalOK" class="modal"><article><h3>¡Pedido registrado!</h3><p><strong id="modalPedido">Pedido #—</strong></p><p><span>Total:</span> <strong id="modalTotal">$ 0,00</strong></p><p><span>Alias:</span> <code id="modalAlias">—</code></p><div class="modal-actions"><button id="copyAliasModal" class="btn ghost">Copiar alias</button><button id="cerrarModal" class="btn">Listo</button></div></article></dialog>
+<script type="module" src="./assets/app.js"></script>
+</body></html>
