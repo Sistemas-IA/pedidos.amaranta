@@ -1,0 +1,8 @@
+{
+  "name": "amaranta-pedidos",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "googleapis": "^131.0.0"
+  }
+}
