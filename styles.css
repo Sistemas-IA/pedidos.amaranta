@@ -1,0 +1,45 @@
+:root{
+  --green:#0f3a33;
+  --bg:#f7f6f3;
+  --ink:#101614;
+  --muted:#6b7b75;
+  --white:#ffffff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.35 system-ui}
+
+.phone{max-width:430px; margin:0 auto; min-height:100vh; background:#fff; box-shadow:0 2px 24px rgba(0,0,0,.08)}
+.topbar{position:sticky; top:0; background:#fff; border-bottom:1px solid #ece9e2}
+.topbar h1{font-size:18px; margin:0; padding:12px 14px}
+
+.content{padding:14px; display:grid; gap:14px}
+.muted{color:var(--muted)}
+
+.card-body{background:var(--green); color:var(--white); border-radius:18px; display:grid; grid-template-columns:1fr 1fr; min-height:150px}
+.left{padding:14px; display:flex; flex-direction:column; gap:8px}
+.title{margin:0; font-size:18px}
+.desc{margin:0; opacity:.9}
+.bottom{margin-top:auto; display:flex; align-items:center; justify-content:space-between}
+.price{font-weight:700}
+.thumb img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border-top-right-radius:18px; border-bottom-right-radius:18px}
+.right{position:relative}
+
+.qty .counter{display:none; align-items:center; gap:8px}
+.qty[data-state="expanded"] .add{display:none}
+.qty[data-state="expanded"] .counter{display:flex}
+.qty[data-state="collapsed"] .add{display:inline-flex}
+.qty[data-state="collapsed"] .counter{display:none}
+
+.btn{border:0; cursor:pointer}
+.btn.primary{width:100%; padding:12px 14px; border-radius:12px; background:var(--green); color:#fff; font-weight:700}
+.btn.ghost{margin-left:auto; padding:6px 10px; border-radius:8px; background:#eef4f2}
+.btn.light{padding:8px 12px; border-radius:12px; background:#e9f5f2; color:var(--green); font-weight:700}
+.btn.circle{width:32px; height:32px; border-radius:999px; background:#e9f5f2; color:var(--green); font-weight:700; display:inline-flex; align-items:center; justify-content:center}
+
+#summary{background:#fff; border:1px solid #ece9e2; border-radius:14px; padding:12px; display:grid; gap:10px}
+#summary h2{margin:0}
+#items{display:grid; gap:6px}
+.line{display:flex; justify-content:space-between}
+.totalLine{display:flex; justify-content:space-between; padding-top:6px; border-top:1px dashed #e3e0d9; font-weight:800}
+.aliasRow{display:flex; align-items:center; gap:8px; font-weight:600}
+code{background:#f5faf8; padding:2px 6px; border-radius:6px}
