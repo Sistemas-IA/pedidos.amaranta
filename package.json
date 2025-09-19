@@ -1,0 +1,13 @@
+{
+  "name": "amaranta-pedidos",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo \"Static front; functions are deployed by Vercel\"",
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "googleapis": "^131.0.0"
+  }
+}

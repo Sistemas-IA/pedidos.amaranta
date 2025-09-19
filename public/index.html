@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pedidos de Viandas</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="phone">
+    <header class="topbar"><h1>Pedidos de Viandas</h1></header>
+    <main class="content">
+      <section id="menu"><p id="loading">Cargando viandas…</p></section>
+      <section id="summary">
+        <h2>Resumen de tu pedido</h2>
+        <div class="auth"><input id="cliId" placeholder="Cliente ID"><input id="cliKey" type="password" placeholder="Clave"></div>
+        <div id="items">Agregá productos…</div>
+        <div><strong>TOTAL</strong>: <span id="grandTotal">$0</span></div>
+        <button id="submitBtn" disabled>Enviar</button>
+      </section>
+    </main>
+  </div>
+  <template id="cardTemplate">
+    <article class="card" data-id="">
+      <h3 class="title"></h3>
+      <p class="desc"></p>
+      <span class="price"></span>
+      <div class="qty" data-state="collapsed">
+        <button class="add">+</button>
+        <div class="counter"><button class="dec">-</button><span class="count">1</span><button class="inc">+</button></div>
+      </div>
+      <img />
+    </article>
+  </template>
+  <script src="/script.js"></script>
+</body>
+</html>
