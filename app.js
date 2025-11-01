@@ -92,21 +92,38 @@
     img.loading = "lazy";
     img.decoding = "async";
 
-    // --- Imagen robusta (Drive + Blob + genérico) ---
-    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL || "./assets/placeholder.png";
+    // --- Imagen robusta (pre-carga: Drive + Blob + genérico) ---
+    const placeholder =
+      state.config.ASSET_PLACEHOLDER_IMG_URL ||
+      (window.location.origin + "/assets/placeholder.png"); // absoluto para evitar problemas de ruta
+
     const srcNorm = normalizeImageUrl(v.Imagen);
     const driveAlt = srcNorm && isGoogleDrive(srcNorm)
       ? srcNorm.replace("export=view", "export=download")
       : "";
 
-    if (isGoogleDrive(srcNorm)) img.referrerPolicy = "no-referrer"; // evita bloqueo por referrer
-    img.src = srcNorm || placeholder;
+    // Mostrar placeholder de entrada (nunca icono roto)
+    img.src = placeholder;
 
-    // Si falla: 1) probá variante de Drive  2) caé al placeholder (sin loop)
-    img.addEventListener("error", () => {
-      if (driveAlt && img.src !== driveAlt) { img.src = driveAlt; return; }
-      if (img.src !== placeholder) { img.src = placeholder; }
-    }, { once: true });
+    // Pre-carga de imagen real en segundo plano
+    if (srcNorm) {
+      const probe = new Image();
+      if (isGoogleDrive(srcNorm)) probe.referrerPolicy = "no-referrer";
+
+      probe.onload = () => { img.src = srcNorm; };
+      probe.onerror = () => {
+        if (driveAlt) {
+          const probe2 = new Image();
+          probe2.referrerPolicy = "no-referrer";
+          probe2.onload = () => { img.src = driveAlt; };
+          probe2.onerror = () => { img.src = placeholder; };
+          probe2.src = driveAlt;
+        } else {
+          img.src = placeholder;
+        }
+      };
+      probe.src = srcNorm;
+    }
 
     imgBox.appendChild(img);
 
