@@ -31,6 +31,29 @@
     ip: null,
   };
 
+  // ===== Helpers de imágenes (Drive + Blob) =====
+  function normalizeImageUrl(u) {
+    if (!u) return "";
+    u = String(u).trim();
+
+    // Google Drive: /file/d/ID/view  →  uc?export=view&id=ID
+    let m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+    if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
+
+    // Google Drive: /open?id=ID
+    m = u.match(/drive\.google\.com\/open\?id=([^&]+)/);
+    if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
+
+    // Ya era uc?export=view&id=...
+    if (/drive\.google\.com\/uc\?/.test(u)) return u;
+
+    // Cualquier otra (Vercel Blob, CDN, etc.)
+    return u;
+  }
+  function isGoogleDrive(u) {
+    return /drive\.google\.com/.test(u || "");
+  }
+
   function fmtMoney(n) {
     try {
       return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0);
@@ -67,8 +90,24 @@
     const img = document.createElement("img");
     img.alt = v.Nombre;
     img.loading = "lazy";
-    img.src = v.Imagen || state.config.ASSET_PLACEHOLDER_IMG_URL || "./assets/placeholder.png";
-    img.onerror = () => { img.src = state.config.ASSET_PLACEHOLDER_IMG_URL || "./assets/placeholder.png"; };
+    img.decoding = "async";
+
+    // --- Imagen robusta (Drive + Blob + genérico) ---
+    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL || "./assets/placeholder.svg";
+    const srcNorm = normalizeImageUrl(v.Imagen);
+    const driveAlt = srcNorm && isGoogleDrive(srcNorm)
+      ? srcNorm.replace("export=view", "export=download")
+      : "";
+
+    if (isGoogleDrive(srcNorm)) img.referrerPolicy = "no-referrer"; // evita bloqueo por referrer
+    img.src = srcNorm || placeholder;
+
+    // Si falla: 1) probá variante de Drive  2) caé al placeholder (sin loop)
+    img.addEventListener("error", () => {
+      if (driveAlt && img.src !== driveAlt) { img.src = driveAlt; return; }
+      if (img.src !== placeholder) { img.src = placeholder; }
+    }, { once: true });
+
     imgBox.appendChild(img);
 
     const body = document.createElement("div");
