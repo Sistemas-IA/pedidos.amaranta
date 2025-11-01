@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pedidos Amaranta</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script defer src="./config.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img id="logo" alt="Amaranta" />
+      <h1>Pedidos</h1>
+    </div>
+    <div id="conn-status" class="status">Cargando…</div>
+  </header>
+
+  <main id="app">
+    <section id="closed" class="closed hidden">
+      <h2 id="closed-title"></h2>
+      <p id="closed-msg"></p>
+      <button id="closed-wa" class="btn hidden">Escribir por WhatsApp</button>
+    </section>
+
+    <section id="catalogo" class="catalogo"></section>
+
+    <section id="resumen" class="resumen">
+      <div id="resumen-list" class="resumen-list"></div>
+      <div class="resumen-total">
+        <span>Total</span>
+        <strong id="resumen-total">$ 0</strong>
+      </div>
+      <button id="btn-confirmar" class="btn btn-primary" disabled>Confirmar pedido</button>
+    </section>
+  </main>
+
+  <div id="auth-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <div class="sheet-content">
+      <h3 id="auth-title">Confirmar pedido</h3>
+      <label>DNI
+        <input id="dni" type="tel" inputmode="numeric" maxlength="8" placeholder="8 dígitos" />
+      </label>
+      <label>Clave
+        <input id="clave" type="password" placeholder="Tu clave" />
+      </label>
+      <label>Comentarios (opcional)
+        <textarea id="comentarios" maxlength="200" rows="3" placeholder="Indicanos particularidades"></textarea>
+      </label>
+      <div class="sheet-actions">
+        <button id="btn-cancelar" class="btn">Cancelar</button>
+        <button id="btn-enviar" class="btn btn-primary">Enviar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
