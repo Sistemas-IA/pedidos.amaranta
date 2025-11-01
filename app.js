@@ -93,7 +93,7 @@
     img.decoding = "async";
 
     // --- Imagen robusta (Drive + Blob + genérico) ---
-    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL || "./assets/placeholder.pgn";
+    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL || "./assets/placeholder.png";
     const srcNorm = normalizeImageUrl(v.Imagen);
     const driveAlt = srcNorm && isGoogleDrive(srcNorm)
       ? srcNorm.replace("export=view", "export=download")
