@@ -39,12 +39,12 @@
   const state = {
     config: {},
     catalogo: [],
-    cart: new Map(), // idVianda -> { id, nombre, precio, cantidad }
+    cart: new Map(),
     ip: null,
-    lastOrder: null, // { idPedido, items:[{nombre, cantidad, precio}], total, fecha }
+    lastOrder: null,
   };
 
-  // ===== Helpers de imágenes (Drive + Blob) =====
+  // ===== Helpers imágenes (Drive + Blob) =====
   function normalizeImageUrl(u) {
     if (!u) return "";
     u = String(u).trim();
@@ -68,6 +68,7 @@
     if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2000);
   }
 
+  // ===== THEME / Assets =====
   function applyTheme() {
     const t = state.config.THEME || {};
     const root = document.documentElement;
@@ -88,11 +89,17 @@
 
     // Ticket logo
     if (state.config.ASSET_LOGO_URL) {
+      // Intentar CORS-friendly
+      els.tktLogo.crossOrigin = "anonymous";
+      els.tktLogo.referrerPolicy = "no-referrer";
       els.tktLogo.src = state.config.ASSET_LOGO_URL;
       els.tktLogo.style.display = "block";
+    } else {
+      els.tktLogo.style.display = "none";
     }
   }
 
+  // ===== Catálogo / Cards =====
   function buildControls(v, current) {
     const frag = document.createDocumentFragment();
     if (current === 0) {
@@ -199,7 +206,7 @@
       left.textContent = `${it.cantidad}× ${it.nombre}`;
       const right = document.createElement("div");
       right.className = "resumen-right";
-      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad); // SUBTOTAL
+      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
       row.append(left, right);
       els.resumenList.appendChild(row);
     });
@@ -236,6 +243,7 @@
     } catch {}
   }
 
+  // ===== Config desde API =====
   async function loadConfig() {
     els.status.textContent = "Obteniendo configuración…";
     const res = await fetch(API + "?route=ui-config", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
@@ -330,7 +338,6 @@
     window.open(url, "_blank");
   }
 
-  // Espera activa hasta que html2canvas esté disponible (máx 4s)
   async function waitForHtml2Canvas() {
     const start = Date.now();
     while (!window.html2canvas) {
@@ -340,16 +347,57 @@
     return !!window.html2canvas;
   }
 
-  // ---- Ticket helpers ----
+  // ===== Inline de imágenes dentro del ticket para que salgan en la captura =====
+  function sameOrigin(url) {
+    try {
+      const u = new URL(url, window.location.href);
+      return u.origin === window.location.origin;
+    } catch { return false; }
+  }
+
+  async function urlToDataURL(url) {
+    // Intenta traer como blob (CORS); si falla, lanza error
+    const resp = await fetch(url, { mode: 'cors', cache: 'no-store' });
+    if (!resp.ok) throw new Error('fetch-failed');
+    const blob = await resp.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function inlineTicketImages(rootEl) {
+    const imgs = Array.from(rootEl.querySelectorAll('img'));
+    const restores = [];
+    for (const img of imgs) {
+      const src = img.getAttribute('src') || '';
+      if (!src) continue;
+      if (src.startsWith('data:')) continue; // ya inline
+      // si es mismo origen o ruta absoluta local, no hace falta
+      if (sameOrigin(src) || src.startsWith('/')) continue;
+
+      try {
+        const dataURL = await urlToDataURL(src);
+        const old = img.src;
+        img.src = dataURL;
+        restores.push(() => { img.src = old; });
+      } catch {
+        // no se pudo inlinear (CORS), seguimos: saldrá sin esa imagen
+      }
+    }
+    return () => { restores.forEach(fn => fn()); };
+  }
+
+  // ---- Ticket ----
   function openTicket(order) {
-    // No mostrar PAY_NOTE bajo el título (solo abajo)
-    els.tktSub.textContent = ""; // limpiamos
-    // Datos
+    // No mostrar PAY_NOTE bajo el título
+    els.tktSub.textContent = "";
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
     els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
 
-    // Items
     els.tktItems.innerHTML = "";
     order.items.forEach(it => {
       const row = document.createElement("div");
@@ -369,24 +417,35 @@
 
     els.tkt.classList.remove("hidden");
 
-    // Guardar = descargar PNG (sin cerrar hasta terminar de generar)
+    // Guardar = descargar PNG (con inline de imágenes y useCORS)
     els.tktSave.onclick = async () => {
       els.tktSave.disabled = true;
       try {
         const ready = await waitForHtml2Canvas();
         if (!ready) { toast("No se pudo preparar el comprobante"); return; }
-        const canvas = await window.html2canvas(els.tktContent, { backgroundColor: "#ffffff", scale: 2 });
+
+        // Inlinear imágenes del ticket (logo y cualquier otra)
+        const restore = await inlineTicketImages(els.tktContent);
+
+        const canvas = await window.html2canvas(els.tktContent, {
+          backgroundColor: "#ffffff",
+          scale: 2,
+          useCORS: true,
+          allowTaint: false,
+        });
         const blob = await new Promise(res => canvas.toBlob(res, "image/png", 1));
+        restore(); // restaurar src originales
+
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = url; a.download = `pedido-${order.idPedido}.png`; a.click();
+        a.href = url; a.download = `pedido-${order.idPedido}.png`;
+        a.click();
         URL.revokeObjectURL(url);
         toast("Imagen descargada ✓");
       } catch {
         toast("No se pudo guardar el comprobante");
       } finally {
         els.tktSave.disabled = false;
-        // ahora sí cerramos el modal
         els.tkt.classList.add("hidden");
       }
     };
