@@ -8,10 +8,10 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <!-- Banner configurable desde Configuracion.ASSET_HEADER_URL -->
   <header class="hdr">
-    <div class="wrap">
-      <img id="logo" alt="Amaranta" />
-      <div class="title">Pedidos</div>
+    <img id="header-img" alt="Encabezado Amaranta" />
+    <div class="wrap mini">
       <div id="conn-status">Cargando…</div>
     </div>
   </header>
@@ -30,8 +30,8 @@
     <section id="resumen">
       <div id="resumen-list"></div>
       <div class="bar">
-        <div><strong>Total</strong></div>
-        <div id="resumen-total">$ 0</div>
+        <div class="total-label"><strong>Total</strong></div>
+        <div id="resumen-total" class="total-money">$ 0</div>
         <button id="btn-confirmar" disabled>Confirmar pedido</button>
       </div>
     </section>
