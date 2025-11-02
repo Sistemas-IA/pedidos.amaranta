@@ -11,14 +11,14 @@ const auth = new google.auth.GoogleAuth({
   scopes: SCOPES
 });
 const sheets = google.sheets({ version: 'v4', auth });
+
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-
-const SHEET_VIANDAS = 'Viandas';
-const SHEET_CLIENTES = 'Clientes';
-const SHEET_PEDIDOS = 'Pedidos';
-const SHEET_CONFIG = 'Configuracion';
-
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'https://pedidos.amaranta.ar';
+
+const SHEET_VIANDAS   = 'Viandas';
+const SHEET_CLIENTES  = 'Clientes';
+const SHEET_PEDIDOS   = 'Pedidos';
+const SHEET_CONFIG    = 'Configuracion';
 
 // ---------- Utils CORS/Res ----------
 function ok(res, data) {
@@ -33,7 +33,6 @@ function err(res, code, msg) {
 }
 
 // ---------- Helpers Config desde hoja ----------
-function numOr(v, d) { const n = Number(v); return Number.isFinite(n) ? n : d; }
 async function readConfigKV() {
   try {
     const r = await sheets.spreadsheets.values.get({
@@ -53,16 +52,29 @@ async function readConfigKV() {
   }
 }
 
+// ---------- Normalización mínima de imagen ----------
+function normalizeImage(u) {
+  if (!u) return '';
+  u = String(u).trim();
+  let m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+  if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
+  m = u.match(/drive\.google\.com\/open\?id=([^&]+)/);
+  if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
+  return u;
+}
+
 // ---------- Helpers ID de pedido ----------
 async function getNextIdPedido() {
   // 1) Si hay Upstash, usar contador atómico
-  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    const url = process.env.UPSTASH_REDIS_REST_URL + '/incr/id:pedidos:last';
+  const urlBase = process.env.UPSTASH_REDIS_REST_URL;
+  const token   = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (urlBase && token) {
+    const url = urlBase.replace(/\/+$/,'') + '/incr/id:pedidos:last';
     const r = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
+      headers: { Authorization: `Bearer ${token}` }
     });
-    const j = await r.json();
+    const j = await r.json().catch(() => ({}));
     const n = Number(j.result || 0);
     return n < 10001 ? 10001 : n; // arrancar en 10001
   }
@@ -75,17 +87,6 @@ async function getNextIdPedido() {
   if (rows <= 1) return 10001; // sólo encabezado
   const lastId = Number(resp.data.values[rows - 1][0]) || 10000;
   return lastId + 1;
-}
-
-// ---------- Normalización mínima de imagen (por si la usás en futuro en UI-config) ----------
-function normalizeImage(u) {
-  if (!u) return '';
-  u = String(u).trim();
-  let m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/);
-  if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
-  m = u.match(/drive\.google\.com\/open\?id=([^&]+)/);
-  if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
-  return u;
 }
 
 // ---------- Handler ----------
@@ -117,8 +118,8 @@ export default async function handler(req, res) {
       RADIUS: kv.RADIUS ?? '16',
       SPACING: kv.SPACING ?? '8',
 
-      // assets opcionales
-      ASSET_LOGO_URL: normalizeImage(kv.ASSET_LOGO_URL ?? ''),
+      // assets (incluye banner)
+      ASSET_HEADER_URL: normalizeImage(kv.ASSET_HEADER_URL ?? ''),
       ASSET_PLACEHOLDER_IMG_URL: normalizeImage(kv.ASSET_PLACEHOLDER_IMG_URL ?? ''),
 
       // límites / UI
@@ -215,7 +216,7 @@ export default async function handler(req, res) {
     // generar IdPedido
     const idPedido = await getNextIdPedido();
 
-    // armar filas (una por vianda distinta)
+    // armar filas (una por vianda distinta) con SUBTOTAL en "Precio"
     let total = 0;
     const toAppend = [];
     for (const it of items) {
@@ -226,17 +227,18 @@ export default async function handler(req, res) {
       if (qty > 9) qty = 9;
       const v = map.get(id);
       if (!v) continue;
-      total += v.precio * qty;
+      const subtotal = v.precio * qty;
+      total += subtotal;
       toAppend.push([
-        idPedido,             // IdPedido
-        String(dni),          // DNI
-        v.nombre,             // Vianda (Nombre)
-        qty,                  // Cantidad
-        comentarios,          // Comentarios (saneado)
-        v.precio,             // Precio unitario (entero)
+        idPedido,                 // IdPedido
+        String(dni),              // DNI
+        v.nombre,                 // Vianda (Nombre)
+        qty,                      // Cantidad
+        comentarios,              // Comentarios (saneado)
+        subtotal,                 // <<< Precio = SUBTOTAL (no unitario)
         new Date().toISOString(), // TimeStamp
-        ip,                   // IP (limitado)
-        ua                    // UserAgent (limitado)
+        ip,                       // IP (limitado)
+        ua                        // UserAgent (limitado)
       ]);
     }
     if (!toAppend.length) return err(res, 400, 'NO_ITEMS');
