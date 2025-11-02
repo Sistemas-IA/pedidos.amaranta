@@ -33,11 +33,7 @@
     tktItems: document.getElementById("tkt-items"),
     tktTotal: document.getElementById("tkt-total"),
     tktNote: document.getElementById("tkt-note"),
-    tktCopy: document.getElementById("tkt-copy"),
-    tktImg: document.getElementById("tkt-img"),
-    tktShare: document.getElementById("tkt-share"),
-    tktWA: document.getElementById("tkt-wa"),
-    tktClose: document.getElementById("tkt-close"),
+    tktSave: document.getElementById("tkt-save"),
   };
 
   const state = {
@@ -270,8 +266,8 @@
       WA_TEMPLATE: conf.WA_TEMPLATE,
       WA_ITEMS_BULLET: conf.WA_ITEMS_BULLET,
       WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
-      PAY_ALIAS: conf.PAY_ALIAS || "", // <-- alias desde Configuracion
-      PAY_NOTE: conf.PAY_NOTE || "",   // texto opcional (ej: “enviar comprobante por WhatsApp”)
+      PAY_ALIAS: conf.PAY_ALIAS || "", // alias de pago
+      PAY_NOTE: conf.PAY_NOTE || "",   // nota opcional
     };
     applyTheme();
 
@@ -335,30 +331,12 @@
   }
 
   // ---- Ticket helpers ----
-  function buildTicketText(order) {
-    const lines = [];
-    lines.push(`Comprobante de pedido`);
-    lines.push(`Pedido: ${order.idPedido}`);
-    lines.push(`Fecha: ${order.fecha}`);
-    if (state.config.PAY_ALIAS) lines.push(`Alias: ${state.config.PAY_ALIAS}`);
-    lines.push(``);
-    order.items.forEach(it => {
-      lines.push(`${it.cantidad}× ${it.nombre} — $ ${fmtMoney(it.precio * it.cantidad)}`);
-    });
-    lines.push(``);
-    lines.push(`Total: $ ${fmtMoney(order.total)}`);
-    if (state.config.PAY_NOTE) lines.push(state.config.PAY_NOTE);
-    return lines.join("\n");
-  }
-
   function openTicket(order) {
-    // Encabezado del ticket
     els.tktSub.textContent = state.config.PAY_NOTE || "";
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
     els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
 
-    // Items
     els.tktItems.innerHTML = "";
     order.items.forEach(it => {
       const row = document.createElement("div");
@@ -376,45 +354,38 @@
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
     els.tktNote.textContent = state.config.PAY_NOTE || "";
 
-    // mostrar modal
     els.tkt.classList.remove("hidden");
 
-    // botones
-    els.tktCopy.onclick = async () => {
-      const txt = buildTicketText(order);
-      try { await navigator.clipboard.writeText(txt); toast("Copiado ✓"); }
-      catch { toast("No se pudo copiar"); }
-    };
-
-    els.tktImg.onclick = async () => {
-      try {
-        if (!window.html2canvas) { toast("Cargando capturador… probá de nuevo en 1 segundo"); return; }
-        const canvas = await window.html2canvas(els.tktContent, { backgroundColor: "#ffffff", scale: 2 });
-        const url = canvas.toDataURL("image/png");
-        const a = document.createElement("a");
-        a.href = url; a.download = `pedido-${order.idPedido}.png`; a.click();
-      } catch { toast("No se pudo generar la imagen"); }
-    };
-
-    els.tktShare.onclick = async () => {
-      const txt = buildTicketText(order);
-      if (navigator.share) {
-        try { await navigator.share({ text: txt, title: `Pedido #${order.idPedido}` }); }
-        catch {}
-      } else {
-        toast("Tu navegador no soporta compartir. Usá ‘Copiar texto’ o ‘Descargar imagen’.", true);
-      }
-    };
-
-    els.tktWA.onclick = () => {
-      if (!state.config.WA_ENABLED) return;
-      const text = buildWA(order.items, order.idPedido, order.total);
-      const url = "https://wa.me/" + (state.config.WA_PHONE_TARGET || "") + "?text=" + encodeURIComponent(text);
-      window.open(url, "_blank");
-    };
-
-    els.tktClose.onclick = () => {
+    // Un solo botón: Guardar…  (share con imagen si se puede; fallback: descarga)
+    els.tktSave.onclick = async () => {
+      // cerrar primero como pediste
       els.tkt.classList.add("hidden");
+
+      const run = async () => {
+        try {
+          if (!window.html2canvas) { toast("Cargando capturador… probá de nuevo en 1 segundo"); return; }
+          const canvas = await window.html2canvas(els.tktContent, { backgroundColor: "#ffffff", scale: 2 });
+          const blob = await new Promise(res => canvas.toBlob(res, "image/png", 1));
+          const file = new File([blob], `pedido-${order.idPedido}.png`, { type: "image/png" });
+
+          // Web Share con archivos (si está disponible)
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: `Pedido #${order.idPedido}` });
+          } else {
+            // Fallback: descarga local
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url; a.download = `pedido-${order.idPedido}.png`; a.click();
+            URL.revokeObjectURL(url);
+            toast("Imagen descargada ✓");
+          }
+        } catch {
+          toast("No se pudo guardar el comprobante");
+        }
+      };
+
+      // pequeña espera para que se cierre visualmente y no corte el gesto
+      setTimeout(run, 50);
     };
   }
 
@@ -447,7 +418,7 @@
         else toast(state.config.MSG_AUTH_FAIL || "No se pudo procesar.");
         els.btnEnviar.disabled = false; els.btnEnviar.textContent = "Enviar"; return;
       }
-      // Éxito: armamos el ticket ANTES de limpiar el carrito
+      // Éxito → construir order antes de limpiar carrito
       const id = data.idPedido;
       let total = 0; cartItems.forEach(it => total += (it.precio * it.cantidad));
       const order = {
@@ -458,11 +429,9 @@
       };
       state.lastOrder = order;
 
-      // Cerrar sheet y abrir ticket
       closeSheet();
       openTicket(order);
 
-      // Reset carrito y UI
       state.cart.clear();
       renderCatalogo();
       renderResumen();
