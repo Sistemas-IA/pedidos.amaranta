@@ -4,10 +4,9 @@
   const API_KEY = cfg.API_KEY || "";
 
   const els = {
-    logo: document.getElementById("logo"),
+    headerImg: document.getElementById("header-img"),
     status: document.getElementById("conn-status"),
     catalogo: document.getElementById("catalogo"),
-    resumen: document.getElementById("resumen"),
     resumenList: document.getElementById("resumen-list"),
     resumenTotal: document.getElementById("resumen-total"),
     btnConfirmar: document.getElementById("btn-confirmar"),
@@ -22,6 +21,7 @@
     closedTitle: document.getElementById("closed-title"),
     closedMsg: document.getElementById("closed-msg"),
     closedWA: document.getElementById("closed-wa"),
+    app: document.getElementById("app")
   };
 
   const state = {
@@ -35,19 +35,11 @@
   function normalizeImageUrl(u) {
     if (!u) return "";
     u = String(u).trim();
-
-    // Google Drive: /file/d/ID/view  →  uc?export=view&id=ID
     let m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/);
     if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
-
-    // Google Drive: /open?id=ID
     m = u.match(/drive\.google\.com\/open\?id=([^&]+)/);
     if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
-
-    // Ya era uc?export=view&id=...
     if (/drive\.google\.com\/uc\?/.test(u)) return u;
-
-    // Cualquier otra (Vercel Blob, CDN, etc.)
     return u;
   }
   function isGoogleDrive(u) {
@@ -75,16 +67,45 @@
     if (t.TEXT) root.style.setProperty("--text", t.TEXT);
     if (t.RADIUS != null) root.style.setProperty("--radius", t.RADIUS + "px");
     if (t.SPACING != null) root.style.setProperty("--space", t.SPACING + "px");
-    if (state.config.ASSET_LOGO_URL) {
-      els.logo.src = state.config.ASSET_LOGO_URL;
-      els.logo.style.display = "block";
+
+    // Banner
+    if (state.config.ASSET_HEADER_URL) {
+      els.headerImg.src = state.config.ASSET_HEADER_URL;
+      els.headerImg.style.display = "block";
+    } else {
+      // fallback: placeholder si querés
+      els.headerImg.style.display = "none";
     }
+  }
+
+  function buildControls(v, current) {
+    const frag = document.createDocumentFragment();
+    if (current === 0) {
+      const plus = document.createElement("button");
+      plus.className = "plus";
+      plus.textContent = "+";
+      plus.addEventListener("click", () => updateQty(v, 1));
+      frag.appendChild(plus);
+    } else {
+      const pill = document.createElement("div");
+      pill.className = "qty";
+      const minusBtn = document.createElement("button"); minusBtn.textContent = "–";
+      const n = document.createElement("span"); n.className = "n"; n.textContent = current;
+      const plusBtn = document.createElement("button"); plusBtn.textContent = "+";
+      minusBtn.addEventListener("click", () => updateQty(v, current - 1));
+      plusBtn.addEventListener("click", () => updateQty(v, current + 1));
+      pill.append(minusBtn, n, plusBtn);
+      frag.appendChild(pill);
+    }
+    return frag;
   }
 
   function buildCard(v) {
     const card = document.createElement("article");
     card.className = "card";
+    card.dataset.id = v.IdVianda;
 
+    // IMG
     const imgBox = document.createElement("div");
     imgBox.className = "card-img";
     const img = document.createElement("img");
@@ -92,24 +113,19 @@
     img.loading = "lazy";
     img.decoding = "async";
 
-    // --- Imagen robusta (pre-carga: Drive + Blob + genérico) ---
-    const placeholder =
-      state.config.ASSET_PLACEHOLDER_IMG_URL ||
-      (window.location.origin + "/assets/placeholder.png"); // absoluto para evitar problemas de ruta
+    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL ||
+      (window.location.origin + "/assets/placeholder.png");
 
     const srcNorm = normalizeImageUrl(v.Imagen);
     const driveAlt = srcNorm && isGoogleDrive(srcNorm)
       ? srcNorm.replace("export=view", "export=download")
       : "";
 
-    // Mostrar placeholder de entrada (nunca icono roto)
+    // placeholder de entrada
     img.src = placeholder;
-
-    // Pre-carga de imagen real en segundo plano
     if (srcNorm) {
       const probe = new Image();
       if (isGoogleDrive(srcNorm)) probe.referrerPolicy = "no-referrer";
-
       probe.onload = () => { img.src = srcNorm; };
       probe.onerror = () => {
         if (driveAlt) {
@@ -118,50 +134,38 @@
           probe2.onload = () => { img.src = driveAlt; };
           probe2.onerror = () => { img.src = placeholder; };
           probe2.src = driveAlt;
-        } else {
-          img.src = placeholder;
-        }
+        } else { img.src = placeholder; }
       };
       probe.src = srcNorm;
     }
-
     imgBox.appendChild(img);
 
+    // BODY
     const body = document.createElement("div");
     body.className = "card-body";
+
     const title = document.createElement("h3");
     title.className = "card-title";
     title.textContent = v.Nombre;
+
     const desc = document.createElement("div");
     desc.className = "card-desc";
     desc.textContent = v.Descripcion || "";
+
+    const bottom = document.createElement("div");
+    bottom.className = "card-bottom";
+
     const price = document.createElement("div");
     price.className = "card-price";
     price.textContent = "$ " + fmtMoney(v.Precio);
 
-    const controls = document.createElement("div");
-
+    const controlsBox = document.createElement("div");
     const current = state.cart.get(v.IdVianda)?.cantidad || 0;
-    if (current === 0) {
-      const plus = document.createElement("button");
-      plus.className = "plus";
-      plus.textContent = "+";
-      plus.addEventListener("click", () => updateQty(v, 1));
-      controls.appendChild(plus);
-    } else {
-      const pill = document.createElement("div");
-      pill.className = "qty";
-      const minusBtn = document.createElement("button");
-      minusBtn.textContent = "–";
-      const n = document.createElement("span"); n.className = "n"; n.textContent = current;
-      const plusBtn = document.createElement("button"); plusBtn.textContent = "+";
-      minusBtn.addEventListener("click", () => updateQty(v, current - 1));
-      plusBtn.addEventListener("click", () => updateQty(v, current + 1));
-      pill.append(minusBtn, n, plusBtn);
-      controls.appendChild(pill);
-    }
+    controlsBox.appendChild(buildControls(v, current));
 
-    body.append(title, desc, price, controls);
+    bottom.append(price, controlsBox);
+    body.append(title, desc, bottom);
+
     card.append(imgBox, body);
     return card;
   }
@@ -185,14 +189,35 @@
     let total = 0;
     const items = Array.from(state.cart.values());
     items.forEach(it => total += (it.precio * it.cantidad));
+
     items.slice(0, (state.config.UI_RESUMEN_ITEMS_VISIBLES || 4)).forEach(it => {
       const row = document.createElement("div");
       row.className = "resumen-item";
-      row.textContent = `${it.cantidad}× ${it.nombre} — $ ${fmtMoney(it.precio)}`;
+      const left = document.createElement("div");
+      left.className = "resumen-left";
+      left.textContent = `${it.cantidad}× ${it.nombre}`;
+      const right = document.createElement("div");
+      right.className = "resumen-right";
+      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad); // SUBTOTAL
+      row.append(left, right);
       els.resumenList.appendChild(row);
     });
+
     els.resumenTotal.textContent = "$ " + fmtMoney(total);
     els.btnConfirmar.disabled = total <= 0;
+  }
+
+  // Actualización puntual (sin re-renderizar toda la grilla)
+  function patchCardControls(id, v, n) {
+    const card = els.catalogo.querySelector(`[data-id="${id}"]`);
+    if (!card) return;
+    const bottom = card.querySelector(".card-bottom");
+    if (!bottom) return;
+    // reconstruir solo controles
+    const newControls = buildControls(v, n);
+    const oldControls = bottom.lastElementChild;
+    if (oldControls) bottom.replaceChild(newControls, oldControls);
+    else bottom.appendChild(newControls);
   }
 
   function updateQty(v, n) {
@@ -201,7 +226,8 @@
     if (n > max) { toast(state.config.MSG_LIMIT || "Máximo 9 por vianda."); n = max; }
     if (n === 0) state.cart.delete(v.IdVianda);
     else state.cart.set(v.IdVianda, { id: v.IdVianda, nombre: v.Nombre, precio: Number(v.Precio), cantidad: n });
-    renderCatalogo();
+    // parchear solo esta card (sin parpadeo)
+    patchCardControls(v.IdVianda, v, n);
     renderResumen();
   }
 
@@ -226,7 +252,7 @@
         RADIUS: Number(conf.RADIUS || 16),
         SPACING: Number(conf.SPACING || 8),
       },
-      ASSET_LOGO_URL: conf.ASSET_LOGO_URL || "",
+      ASSET_HEADER_URL: conf.ASSET_HEADER_URL || "",
       ASSET_PLACEHOLDER_IMG_URL: conf.ASSET_PLACEHOLDER_IMG_URL || "",
       FORM_ENABLED: String(conf.FORM_ENABLED || "true").toLowerCase() === "true",
       FORM_CLOSED_TITLE: conf.FORM_CLOSED_TITLE,
@@ -246,7 +272,7 @@
     applyTheme();
 
     if (!state.config.FORM_ENABLED) {
-      document.getElementById("app").classList.add("hidden");
+      els.app.classList.add("hidden");
       els.closed.classList.remove("hidden");
       els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
       els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp. Volvé más tarde o escribinos.";
@@ -270,7 +296,6 @@
       return;
     }
     state.catalogo = Array.isArray(data.items) ? data.items : [];
-    // Respetar orden tal cual viene (planilla)
     renderCatalogo();
     els.status.textContent = "Catálogo actualizado ✓";
   }
@@ -284,8 +309,7 @@
     const itemsStr = items.map(it => line
       .replace("{CANT}", it.cantidad)
       .replace("{NOMBRE}", it.nombre)
-      .replace("{PRECIO}", fmtMoney(it.precio))
-      .replace("{SUBTOTAL}", fmtMoney(it.precio * it.cantidad))
+      .replace("{PRECIO}", fmtMoney(it.precio * it.cantidad)) // SUBTOTAL en WA
     ).join("\n");
     return tmpl
       .replace("{IDPEDIDO}", idPedido)
