@@ -10,12 +10,24 @@ body{
   background:var(--bg); color:var(--text);
 }
 
-/* Header / banner */
-.hdr{position:sticky;top:0;background:#fff;z-index:10;border-bottom:1px solid #eee}
-.hdr #header-img{
-  display:block; width:100%; height:auto; max-height:320px; object-fit:cover;
+/* Header / banner fijo */
+.hdr{
+  position:sticky; top:0; z-index:1000;
+  background:#fff; border-bottom:1px solid #eee;
 }
-.wrap.mini{max-width:1200px;margin:0 auto;padding:8px 16px;display:flex;align-items:center}
+.hdr #header-img{
+  display:block; width:100%; height:auto; max-height:320px;
+  object-fit:cover; /* mobile: llena el ancho */
+}
+@media (min-width: 900px){
+  .hdr #header-img{
+    object-fit:contain; /* desktop: NO recorta, muestra la imagen completa */
+    background:#fff;    /* fondo blanco si sobran bandas */
+  }
+}
+.wrap.mini{
+  max-width:1200px;margin:0 auto;padding:8px 16px;display:flex;align-items:center
+}
 #conn-status{margin-left:auto;font-size:12px;color:#666}
 
 /* Main containers */
@@ -38,9 +50,7 @@ main{max-width:1200px;margin:0 auto;padding:16px}
   .grid{ grid-template-columns: 1fr; }
 }
 
-/* Card SIEMPRE horizontal (desktop y mobile):
-   - columna izquierda 60% (imagen)
-   - columna derecha 40% (texto/controles) */
+/* Card siempre horizontal (60/40) */
 .card{
   border:1px solid #e6e6e6;
   border-radius:var(--radius);
@@ -54,16 +64,16 @@ main{max-width:1200px;margin:0 auto;padding:16px}
 .card-img{background:#f7f7f7}
 .card-img img{
   width:100%;
-  aspect-ratio:1/1;        /* imagen cuadrada recortada */
+  aspect-ratio:1/1;
   object-fit:cover;
   display:block;
 }
 
-/* Cuerpo con top/bottom */
+/* Cuerpo: arriba (título+desc) y abajo (precio+selector apilados) */
 .card-body{
   padding:14px;
   display:grid;
-  grid-template-rows: auto 1fr auto; /* título/desc (arriba), espacio, bottom */
+  grid-template-rows: auto 1fr auto;
   gap:8px;
 }
 .card-title{font-size:18px;margin:0}
@@ -71,21 +81,24 @@ main{max-width:1200px;margin:0 auto;padding:16px}
 .card-bottom{
   margin-top:auto;
   display:flex;
-  align-items:center;
-  justify-content:flex-end; /* precio + selector alineados a la derecha */
-  gap:10px;
+  flex-direction:column;   /* <-- apilados */
+  align-items:flex-end;    /* <-- alineados a la derecha */
+  gap:8px;
 }
 .card-price{font-weight:700}
-
-/* Controles */
-.qty{display:inline-flex;gap:8px;align-items:center;border:1px solid #ddd;border-radius:999px;padding:4px 10px;width:max-content}
+.qty{
+  display:inline-flex;gap:8px;align-items:center;border:1px solid #ddd;
+  border-radius:999px;padding:4px 10px;width:max-content
+}
 .qty button,.plus{
   border:0;background:#f1f5f0;border-radius:999px;padding:6px 10px;cursor:pointer;font-size:16px;line-height:1
 }
 .plus{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center}
 
-/* Resumen fijo abajo */
-#resumen{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:10px 16px}
+/* Resumen fijo abajo: en desktop lo acotamos a la 3ª columna visual */
+#resumen{
+  position:sticky; bottom:0; background:#fff; border-top:1px solid #eee; padding:10px 16px;
+}
 #resumen-list{font-size:14px;color:#444;margin-bottom:6px;display:flex;flex-direction:column;gap:4px}
 .resumen-item{display:flex;justify-content:space-between;gap:12px}
 .resumen-left{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -95,6 +108,19 @@ main{max-width:1200px;margin:0 auto;padding:16px}
 .total-money{font-weight:700}
 #btn-confirmar{margin-left:auto;background:var(--primary);color:#fff;border:0;border-radius:12px;padding:10px 16px;cursor:pointer}
 #btn-confirmar:disabled{opacity:.5;cursor:not-allowed}
+
+/* En ≥1200px: el contenido del resumen se “mete” en la 3ª columna */
+@media (min-width: 1200px){
+  #resumen{
+    display:grid;
+    grid-template-columns: 1fr 1fr 1fr; /* 3 columnas como el catálogo */
+    column-gap:16px;
+  }
+  #resumen-list, #resumen .bar{
+    grid-column: 3;       /* <-- todo el contenido dentro de la 3ª columna */
+    max-width: 100%;      /* limita a ese ancho de columna */
+  }
+}
 
 /* Sheet (modal simple) */
 #auth-sheet{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:flex-end;justify-content:center;padding:16px}
