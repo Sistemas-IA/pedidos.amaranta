@@ -1,8 +1,4 @@
 // /api/pedidos.js — API independiente para Pedidos (Vercel Serverless)
-// Requiere env: GOOGLE_SERVICE_ACCOUNT (JSON), SPREADSHEET_ID
-// Recomendadas: CORS_ORIGIN (https://pedidos.amaranta.ar)
-// Opcionales: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN (ID atómico y rate-limit futuro)
-
 import { google } from 'googleapis';
 
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
@@ -21,23 +17,20 @@ const SHEET_PEDIDOS   = 'Pedidos';
 const SHEET_CONFIG    = 'Configuracion';
 
 // ---------- Utils CORS/Res ----------
-function ok(res, data) {
+function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  return res.status(200).json({ ok: true, ...data });
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
 }
-function err(res, code, msg) {
-  res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
-  return res.status(code).json({ ok: false, error: msg });
-}
+function ok(res, data) { setCors(res); return res.status(200).json({ ok: true, ...data }); }
+function err(res, code, msg) { setCors(res); return res.status(code).json({ ok: false, error: msg }); }
 
 // ---------- Helpers Config desde hoja ----------
 async function readConfigKV() {
   try {
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_CONFIG}!A:B` // Col A=Clave, Col B=Valor
+      range: `${SHEET_CONFIG}!A:B`
     });
     const rows = r.data.values || [];
     const kv = {};
@@ -48,7 +41,7 @@ async function readConfigKV() {
     }
     return kv;
   } catch {
-    return {}; // si no hay hoja Configuracion, seguimos con defaults
+    return {};
   }
 }
 
@@ -65,43 +58,35 @@ function normalizeImage(u) {
 
 // ---------- Helpers ID de pedido ----------
 async function getNextIdPedido() {
-  // 1) Si hay Upstash, usar contador atómico
   const urlBase = process.env.UPSTASH_REDIS_REST_URL;
   const token   = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (urlBase && token) {
     const url = urlBase.replace(/\/+$/,'') + '/incr/id:pedidos:last';
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    const r = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     const j = await r.json().catch(() => ({}));
     const n = Number(j.result || 0);
-    return n < 10001 ? 10001 : n; // arrancar en 10001
+    return n < 10001 ? 10001 : n;
   }
-  // 2) Fallback: mirar última fila de Pedidos y +1
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_PEDIDOS}!A:A`
   });
   const rows = resp.data.values?.length || 1;
-  if (rows <= 1) return 10001; // sólo encabezado
+  if (rows <= 1) return 10001;
   const lastId = Number(resp.data.values[rows - 1][0]) || 10000;
   return lastId + 1;
 }
 
 // ---------- Handler ----------
 export default async function handler(req, res) {
-  // Preflight
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    setCors(res);
     return res.status(200).end();
   }
 
   const route = String(req.query.route || '').toLowerCase();
 
-  // -------- GET ui-config (LEE HOJA Configuracion + defaults) --------
+  // -------- GET ui-config --------
   if (req.method === 'GET' && route === 'ui-config') {
     const kv = await readConfigKV();
     return ok(res, {
@@ -110,7 +95,7 @@ export default async function handler(req, res) {
       FORM_CLOSED_TITLE: kv.FORM_CLOSED_TITLE ?? 'Pedidos temporalmente cerrados',
       FORM_CLOSED_MESSAGE: kv.FORM_CLOSED_MESSAGE ?? 'Estamos atendiendo por WhatsApp. Volvé más tarde o escribinos.',
 
-      // UI / theme opcional
+      // UI / theme
       THEME_PRIMARY: kv.THEME_PRIMARY ?? '',
       THEME_SECONDARY: kv.THEME_SECONDARY ?? '',
       THEME_BG: kv.THEME_BG ?? '',
@@ -118,9 +103,10 @@ export default async function handler(req, res) {
       RADIUS: kv.RADIUS ?? '16',
       SPACING: kv.SPACING ?? '8',
 
-      // assets (incluye banner)
+      // assets
       ASSET_HEADER_URL: normalizeImage(kv.ASSET_HEADER_URL ?? ''),
       ASSET_PLACEHOLDER_IMG_URL: normalizeImage(kv.ASSET_PLACEHOLDER_IMG_URL ?? ''),
+      ASSET_LOGO_URL: normalizeImage(kv.ASSET_LOGO_URL ?? ''),
 
       // límites / UI
       UI_MAX_QTY_POR_VIANDA: kv.UI_MAX_QTY_POR_VIANDA ?? '9',
@@ -137,7 +123,11 @@ export default async function handler(req, res) {
       WA_ENABLED: String(kv.WA_ENABLED ?? 'true'),
       WA_TEMPLATE: kv.WA_TEMPLATE ?? '',
       WA_ITEMS_BULLET: kv.WA_ITEMS_BULLET ?? '',
-      WA_PHONE_TARGET: kv.WA_PHONE_TARGET ?? ''
+      WA_PHONE_TARGET: kv.WA_PHONE_TARGET ?? '',
+
+      // PAGO (nuevo)
+      PAY_ALIAS: kv.PAY_ALIAS ?? '',
+      PAY_NOTE: kv.PAY_NOTE ?? '',
     });
   }
 
@@ -166,19 +156,16 @@ export default async function handler(req, res) {
 
   // -------- POST pedido --------
   if (req.method === 'POST' && route === 'pedido') {
-    // límites/saneo
     const MAX_COMENT = 400, MAX_IP = 128, MAX_UA = 256;
 
     const body = req.body || {};
     const dni = String(body.dni || '').trim();
     const clave = String(body.clave || '').trim();
 
-    // IP y UA (limitadas)
     const ipHeader = (req.headers['x-forwarded-for'] ?? '').toString().split(',')[0] || req.socket?.remoteAddress || '';
     const ip = (body.ip || ipHeader || '').toString().slice(0, MAX_IP);
     const ua = (body.ua || req.headers['user-agent'] || '').toString().slice(0, MAX_UA);
 
-    // Comentarios (sanitizados)
     let comentarios = (body.comentarios ?? '').toString();
     comentarios = comentarios.replace(/\s+/g, ' ').trim().slice(0, MAX_COMENT);
 
@@ -200,7 +187,7 @@ export default async function handler(req, res) {
       return err(res, 401, 'AUTH_FAIL');
     }
 
-    // catálogo para precios vigentes
+    // catálogo para precios
     const rv = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: `${SHEET_VIANDAS}!A:D`
@@ -213,10 +200,8 @@ export default async function handler(req, res) {
       map.set(id, { nombre: row[1], precio: Number(row[3]) | 0 });
     }
 
-    // generar IdPedido
     const idPedido = await getNextIdPedido();
 
-    // armar filas (una por vianda distinta) con SUBTOTAL en "Precio"
     let total = 0;
     const toAppend = [];
     for (const it of items) {
@@ -235,15 +220,14 @@ export default async function handler(req, res) {
         v.nombre,                 // Vianda (Nombre)
         qty,                      // Cantidad
         comentarios,              // Comentarios (saneado)
-        subtotal,                 // <<< Precio = SUBTOTAL (no unitario)
+        subtotal,                 // Precio = SUBTOTAL
         new Date().toISOString(), // TimeStamp
-        ip,                       // IP (limitado)
-        ua                        // UserAgent (limitado)
+        ip,                       // IP
+        ua                        // UserAgent
       ]);
     }
     if (!toAppend.length) return err(res, 400, 'NO_ITEMS');
 
-    // escribir en "Pedidos"
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: `${SHEET_PEDIDOS}!A:I`,
