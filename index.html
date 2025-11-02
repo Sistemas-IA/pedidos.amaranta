@@ -43,7 +43,7 @@
       <h3>Datos del cliente</h3>
       <div class="row">
         <div class="field" style="flex:1">
-          <label for="dni">DNI</</label>
+          <label for="dni">DNI</label>
           <input id="dni" inputmode="numeric" pattern="\\d{8}" maxlength="8" placeholder="12345678" />
         </div>
         <div class="field" style="flex:1">
@@ -62,10 +62,46 @@
     </div>
   </div>
 
+  <!-- Modal Ticket / Comprobante -->
+  <div id="ticket" class="hidden" aria-modal="true" role="dialog">
+    <div class="ticket">
+      <div id="ticket-content">
+        <div class="tkt-head">
+          <img id="tkt-logo" alt="Amaranta" />
+          <div class="tkt-title">
+            <h3>Comprobante de pedido</h3>
+            <div class="tkt-sub" id="tkt-sub">—</div>
+          </div>
+        </div>
+        <div class="tkt-info">
+          <div><strong>N° pedido:</strong> <span id="tkt-id">—</span></div>
+          <div><strong>Fecha:</strong> <span id="tkt-date">—</span></div>
+          <div><strong>Alias de pago:</strong> <span id="tkt-alias">—</span></div>
+        </div>
+        <div class="tkt-items" id="tkt-items"></div>
+        <div class="tkt-total">
+          <div>Total</div>
+          <div id="tkt-total">$ 0</div>
+        </div>
+        <div class="tkt-note" id="tkt-note"></div>
+      </div>
+
+      <div class="ticket-actions">
+        <button id="tkt-copy" class="btn">Copiar texto</button>
+        <button id="tkt-img" class="btn">Descargar imagen</button>
+        <button id="tkt-share" class="btn">Compartir</button>
+        <button id="tkt-wa" class="btn primary">WhatsApp</button>
+        <button id="tkt-close" class="btn cancel">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast"></div>
 
   <!-- Config y app -->
   <script src="/config.js"></script>
+  <!-- html2canvas para exportar imagen del ticket -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" async></script>
   <script src="/app.js"></script>
 </body>
 </html>
