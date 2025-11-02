@@ -21,7 +21,23 @@
     closedTitle: document.getElementById("closed-title"),
     closedMsg: document.getElementById("closed-msg"),
     closedWA: document.getElementById("closed-wa"),
-    app: document.getElementById("app")
+    app: document.getElementById("app"),
+    // Ticket
+    tkt: document.getElementById("ticket"),
+    tktContent: document.getElementById("ticket-content"),
+    tktLogo: document.getElementById("tkt-logo"),
+    tktSub: document.getElementById("tkt-sub"),
+    tktId: document.getElementById("tkt-id"),
+    tktDate: document.getElementById("tkt-date"),
+    tktAlias: document.getElementById("tkt-alias"),
+    tktItems: document.getElementById("tkt-items"),
+    tktTotal: document.getElementById("tkt-total"),
+    tktNote: document.getElementById("tkt-note"),
+    tktCopy: document.getElementById("tkt-copy"),
+    tktImg: document.getElementById("tkt-img"),
+    tktShare: document.getElementById("tkt-share"),
+    tktWA: document.getElementById("tkt-wa"),
+    tktClose: document.getElementById("tkt-close"),
   };
 
   const state = {
@@ -29,6 +45,7 @@
     catalogo: [],
     cart: new Map(), // idVianda -> { id, nombre, precio, cantidad }
     ip: null,
+    lastOrder: null, // { idPedido, items:[{nombre, cantidad, precio}], total, fecha }
   };
 
   // ===== Helpers de imágenes (Drive + Blob) =====
@@ -42,20 +59,17 @@
     if (/drive\.google\.com\/uc\?/.test(u)) return u;
     return u;
   }
-  function isGoogleDrive(u) {
-    return /drive\.google\.com/.test(u || "");
-  }
+  function isGoogleDrive(u) { return /drive\.google\.com/.test(u || ""); }
 
   function fmtMoney(n) {
-    try {
-      return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0);
-    } catch { return String(n); }
+    try { return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0); }
+    catch { return String(n); }
   }
 
-  function toast(msg) {
+  function toast(msg, hold=false) {
     els.toast.textContent = msg;
     els.toast.classList.add("show");
-    setTimeout(() => els.toast.classList.remove("show"), 2000);
+    if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2000);
   }
 
   function applyTheme() {
@@ -73,8 +87,13 @@
       els.headerImg.src = state.config.ASSET_HEADER_URL;
       els.headerImg.style.display = "block";
     } else {
-      // fallback: placeholder si querés
       els.headerImg.style.display = "none";
+    }
+
+    // Ticket logo (si tenés logo en Config)
+    if (state.config.ASSET_LOGO_URL) {
+      els.tktLogo.src = state.config.ASSET_LOGO_URL;
+      els.tktLogo.style.display = "block";
     }
   }
 
@@ -109,19 +128,13 @@
     const imgBox = document.createElement("div");
     imgBox.className = "card-img";
     const img = document.createElement("img");
-    img.alt = v.Nombre;
-    img.loading = "lazy";
-    img.decoding = "async";
+    img.alt = v.Nombre; img.loading = "lazy"; img.decoding = "async";
 
     const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL ||
       (window.location.origin + "/assets/placeholder.png");
-
     const srcNorm = normalizeImageUrl(v.Imagen);
     const driveAlt = srcNorm && isGoogleDrive(srcNorm)
-      ? srcNorm.replace("export=view", "export=download")
-      : "";
-
-    // placeholder de entrada
+      ? srcNorm.replace("export=view", "export=download") : "";
     img.src = placeholder;
     if (srcNorm) {
       const probe = new Image();
@@ -143,18 +156,13 @@
     // BODY
     const body = document.createElement("div");
     body.className = "card-body";
-
     const title = document.createElement("h3");
-    title.className = "card-title";
-    title.textContent = v.Nombre;
-
+    title.className = "card-title"; title.textContent = v.Nombre;
     const desc = document.createElement("div");
-    desc.className = "card-desc";
-    desc.textContent = v.Descripcion || "";
+    desc.className = "card-desc"; desc.textContent = v.Descripcion || "";
 
     const bottom = document.createElement("div");
     bottom.className = "card-bottom";
-
     const price = document.createElement("div");
     price.className = "card-price";
     price.textContent = "$ " + fmtMoney(v.Precio);
@@ -165,7 +173,6 @@
 
     bottom.append(price, controlsBox);
     body.append(title, desc, bottom);
-
     card.append(imgBox, body);
     return card;
   }
@@ -179,9 +186,7 @@
       els.catalogo.appendChild(empty);
       return;
     }
-    for (const v of state.catalogo) {
-      els.catalogo.appendChild(buildCard(v));
-    }
+    for (const v of state.catalogo) els.catalogo.appendChild(buildCard(v));
   }
 
   function renderResumen() {
@@ -207,13 +212,11 @@
     els.btnConfirmar.disabled = total <= 0;
   }
 
-  // Actualización puntual (sin re-renderizar toda la grilla)
   function patchCardControls(id, v, n) {
     const card = els.catalogo.querySelector(`[data-id="${id}"]`);
     if (!card) return;
     const bottom = card.querySelector(".card-bottom");
     if (!bottom) return;
-    // reconstruir solo controles
     const newControls = buildControls(v, n);
     const oldControls = bottom.lastElementChild;
     if (oldControls) bottom.replaceChild(newControls, oldControls);
@@ -226,7 +229,6 @@
     if (n > max) { toast(state.config.MSG_LIMIT || "Máximo 9 por vianda."); n = max; }
     if (n === 0) state.cart.delete(v.IdVianda);
     else state.cart.set(v.IdVianda, { id: v.IdVianda, nombre: v.Nombre, precio: Number(v.Precio), cantidad: n });
-    // parchear solo esta card (sin parpadeo)
     patchCardControls(v.IdVianda, v, n);
     renderResumen();
   }
@@ -234,8 +236,7 @@
   async function getIP() {
     try {
       const res = await fetch("https://api.ipify.org?format=json");
-      const j = await res.json();
-      state.ip = j.ip;
+      const j = await res.json(); state.ip = j.ip;
     } catch {}
   }
 
@@ -253,6 +254,7 @@
         SPACING: Number(conf.SPACING || 8),
       },
       ASSET_HEADER_URL: conf.ASSET_HEADER_URL || "",
+      ASSET_LOGO_URL: conf.ASSET_LOGO_URL || "",
       ASSET_PLACEHOLDER_IMG_URL: conf.ASSET_PLACEHOLDER_IMG_URL || "",
       FORM_ENABLED: String(conf.FORM_ENABLED || "true").toLowerCase() === "true",
       FORM_CLOSED_TITLE: conf.FORM_CLOSED_TITLE,
@@ -268,6 +270,8 @@
       WA_TEMPLATE: conf.WA_TEMPLATE,
       WA_ITEMS_BULLET: conf.WA_ITEMS_BULLET,
       WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
+      PAY_ALIAS: conf.PAY_ALIAS || "", // <-- alias desde Configuracion
+      PAY_NOTE: conf.PAY_NOTE || "",   // texto opcional (ej: “enviar comprobante por WhatsApp”)
     };
     applyTheme();
 
@@ -291,10 +295,7 @@
     els.status.textContent = "Cargando catálogo…";
     const res = await fetch(API + "?route=viandas", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
     const data = await res.json();
-    if (data.closed) {
-      els.status.textContent = "Formulario cerrado";
-      return;
-    }
+    if (data.closed) { els.status.textContent = "Formulario cerrado"; return; }
     state.catalogo = Array.isArray(data.items) ? data.items : [];
     renderCatalogo();
     els.status.textContent = "Catálogo actualizado ✓";
@@ -304,17 +305,18 @@
   function closeSheet() { els.sheet.classList.add("hidden"); }
 
   function buildWA(items, idPedido, total) {
-    const tmpl = state.config.WA_TEMPLATE || "Pedido #{IDPEDIDO} por ${TOTAL}\n{ITEMS}";
-    const line = state.config.WA_ITEMS_BULLET || "- {CANT}× {NOMBRE} — ${PRECIO}";
+    const tmpl = state.config.WA_TEMPLATE || "Pedido #{IDPEDIDO} por ${TOTAL}\n{ITEMS}\nAlias: {ALIAS}";
+    const line = state.config.WA_ITEMS_BULLET || "- {CANT}× {NOMBRE} — ${SUBTOTAL}";
     const itemsStr = items.map(it => line
       .replace("{CANT}", it.cantidad)
       .replace("{NOMBRE}", it.nombre)
-      .replace("{PRECIO}", fmtMoney(it.precio * it.cantidad)) // SUBTOTAL en WA
+      .replace("${SUBTOTAL}", fmtMoney(it.precio * it.cantidad))
     ).join("\n");
     return tmpl
       .replace("{IDPEDIDO}", idPedido)
       .replace("${TOTAL}", fmtMoney(total))
       .replace("{ITEMS}", itemsStr)
+      .replace("{ALIAS}", state.config.PAY_ALIAS || "")
       .replace("{FECHA}", new Date().toLocaleDateString("es-AR"))
       .replace("{HORA}", new Date().toLocaleTimeString("es-AR", {hour: "2-digit", minute:"2-digit"}));
   }
@@ -323,8 +325,7 @@
     if (payload?.closed) {
       const msg = (state.config.FORM_CLOSED_TITLE || "") + "\n" + (state.config.FORM_CLOSED_MESSAGE || "");
       const url = "https://wa.me/" + (state.config.WA_PHONE_TARGET || "") + "?text=" + encodeURIComponent(msg);
-      window.open(url, "_blank");
-      return;
+      window.open(url, "_blank"); return;
     }
     const items = Array.from(state.cart.values());
     let total = 0; items.forEach(it => total += (it.precio * it.cantidad));
@@ -333,58 +334,139 @@
     window.open(url, "_blank");
   }
 
+  // ---- Ticket helpers ----
+  function buildTicketText(order) {
+    const lines = [];
+    lines.push(`Comprobante de pedido`);
+    lines.push(`Pedido: ${order.idPedido}`);
+    lines.push(`Fecha: ${order.fecha}`);
+    if (state.config.PAY_ALIAS) lines.push(`Alias: ${state.config.PAY_ALIAS}`);
+    lines.push(``);
+    order.items.forEach(it => {
+      lines.push(`${it.cantidad}× ${it.nombre} — $ ${fmtMoney(it.precio * it.cantidad)}`);
+    });
+    lines.push(``);
+    lines.push(`Total: $ ${fmtMoney(order.total)}`);
+    if (state.config.PAY_NOTE) lines.push(state.config.PAY_NOTE);
+    return lines.join("\n");
+  }
+
+  function openTicket(order) {
+    // Encabezado del ticket
+    els.tktSub.textContent = state.config.PAY_NOTE || "";
+    els.tktId.textContent = order.idPedido;
+    els.tktDate.textContent = order.fecha;
+    els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
+
+    // Items
+    els.tktItems.innerHTML = "";
+    order.items.forEach(it => {
+      const row = document.createElement("div");
+      row.className = "tkt-row";
+      const left = document.createElement("div");
+      left.className = "tkt-left";
+      left.textContent = `${it.cantidad}× ${it.nombre}`;
+      const right = document.createElement("div");
+      right.className = "tkt-right";
+      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
+      row.append(left, right);
+      els.tktItems.appendChild(row);
+    });
+
+    els.tktTotal.textContent = "$ " + fmtMoney(order.total);
+    els.tktNote.textContent = state.config.PAY_NOTE || "";
+
+    // mostrar modal
+    els.tkt.classList.remove("hidden");
+
+    // botones
+    els.tktCopy.onclick = async () => {
+      const txt = buildTicketText(order);
+      try { await navigator.clipboard.writeText(txt); toast("Copiado ✓"); }
+      catch { toast("No se pudo copiar"); }
+    };
+
+    els.tktImg.onclick = async () => {
+      try {
+        if (!window.html2canvas) { toast("Cargando capturador… probá de nuevo en 1 segundo"); return; }
+        const canvas = await window.html2canvas(els.tktContent, { backgroundColor: "#ffffff", scale: 2 });
+        const url = canvas.toDataURL("image/png");
+        const a = document.createElement("a");
+        a.href = url; a.download = `pedido-${order.idPedido}.png`; a.click();
+      } catch { toast("No se pudo generar la imagen"); }
+    };
+
+    els.tktShare.onclick = async () => {
+      const txt = buildTicketText(order);
+      if (navigator.share) {
+        try { await navigator.share({ text: txt, title: `Pedido #${order.idPedido}` }); }
+        catch {}
+      } else {
+        toast("Tu navegador no soporta compartir. Usá ‘Copiar texto’ o ‘Descargar imagen’.", true);
+      }
+    };
+
+    els.tktWA.onclick = () => {
+      if (!state.config.WA_ENABLED) return;
+      const text = buildWA(order.items, order.idPedido, order.total);
+      const url = "https://wa.me/" + (state.config.WA_PHONE_TARGET || "") + "?text=" + encodeURIComponent(text);
+      window.open(url, "_blank");
+    };
+
+    els.tktClose.onclick = () => {
+      els.tkt.classList.add("hidden");
+    };
+  }
+
   async function enviarPedido() {
     const dni = els.dni.value.trim();
     const clave = els.clave.value.trim();
     const comentarios = els.comentarios.value.trim();
 
     if (!/^\d{8}$/.test(dni) || dni.startsWith("0")) {
-      toast("DNI inválido (8 dígitos, no comienza con 0).");
-      return;
+      toast("DNI inválido (8 dígitos, no comienza con 0)."); return;
     }
     if (!clave) { toast("Ingresá tu clave."); return; }
 
-    const items = Array.from(state.cart.values()).map(it => ({
-      idVianda: it.id,
-      nombre: it.nombre,
-      cantidad: it.cantidad
-    }));
-    if (!items.length) { toast("Tu carrito está vacío."); return; }
+    const cartItems = Array.from(state.cart.values());
+    if (!cartItems.length) { toast("Tu carrito está vacío."); return; }
 
     els.btnEnviar.disabled = true;
     els.btnEnviar.textContent = "Enviando…";
 
     try {
+      const payloadItems = cartItems.map(it => ({ idVianda: it.id, nombre: it.nombre, cantidad: it.cantidad }));
       const res = await fetch(API + "?route=pedido", {
         method: "POST",
         headers: Object.assign({ "Content-Type": "application/json" }, API_KEY ? { "X-API-Key": API_KEY } : {}),
-        body: JSON.stringify({ dni, clave, comentarios, items, ip: state.ip, ua: navigator.userAgent })
+        body: JSON.stringify({ dni, clave, comentarios, items: payloadItems, ip: state.ip, ua: navigator.userAgent })
       });
       const data = await res.json();
       if (!res.ok) {
-        if (data && data.error === "FORM_CLOSED") {
-          toast(state.config.FORM_CLOSED_MESSAGE || "Formulario cerrado.");
-        } else {
-          toast(state.config.MSG_AUTH_FAIL || "No se pudo procesar.");
-        }
-        els.btnEnviar.disabled = false; els.btnEnviar.textContent = "Enviar";
-        return;
+        if (data && data.error === "FORM_CLOSED") toast(state.config.FORM_CLOSED_MESSAGE || "Formulario cerrado.");
+        else toast(state.config.MSG_AUTH_FAIL || "No se pudo procesar.");
+        els.btnEnviar.disabled = false; els.btnEnviar.textContent = "Enviar"; return;
       }
-      // Éxito
+      // Éxito: armamos el ticket ANTES de limpiar el carrito
       const id = data.idPedido;
-      const total = data.total;
-      toast((state.config.MSG_SUCCESS || "¡Listo! Tu pedido es #{IDPEDIDO} por ${TOTAL}.")
-        .replace("{IDPEDIDO}", id)
-        .replace("${TOTAL}", fmtMoney(total))
-      );
+      let total = 0; cartItems.forEach(it => total += (it.precio * it.cantidad));
+      const order = {
+        idPedido: id,
+        items: cartItems.map(x => ({ nombre: x.nombre, cantidad: x.cantidad, precio: x.precio })),
+        total,
+        fecha: new Date().toLocaleString("es-AR", { hour: "2-digit", minute:"2-digit", day:"2-digit", month:"2-digit", year:"2-digit" })
+      };
+      state.lastOrder = order;
+
+      // Cerrar sheet y abrir ticket
       closeSheet();
-      if (state.config.WA_ENABLED) {
-        setTimeout(() => shareWA({ idPedido: id }), 500);
-      }
-      // reset
+      openTicket(order);
+
+      // Reset carrito y UI
       state.cart.clear();
       renderCatalogo();
       renderResumen();
+
     } catch (e) {
       toast(state.config.MSG_SERVER_FAIL || "No pudimos completar el pedido.");
     } finally {
@@ -393,9 +475,9 @@
   }
 
   // Events
-  els.btnConfirmar.addEventListener("click", openSheet);
-  els.btnCancelar.addEventListener("click", closeSheet);
-  els.btnEnviar.addEventListener("click", enviarPedido);
+  document.getElementById("btn-confirmar").addEventListener("click", () => els.sheet.classList.remove("hidden"));
+  document.getElementById("btn-cancelar").addEventListener("click", () => els.sheet.classList.add("hidden"));
+  document.getElementById("btn-enviar").addEventListener("click", enviarPedido);
 
   // Boot
   (async function boot(){
