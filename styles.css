@@ -17,11 +17,11 @@ body{
 }
 .hdr #header-img{
   display:block; width:100%; height:auto; max-height:320px;
-  object-fit:cover; /* mobile: llena el ancho */
+  object-fit:cover; /* mobile */
 }
 @media (min-width: 900px){
   .hdr #header-img{
-    object-fit:contain; /* desktop: NO recorta */
+    object-fit:contain; /* desktop: no recorta */
     background:#fff;
   }
 }
@@ -79,7 +79,7 @@ main{max-width:1200px;margin:0 auto;padding:16px}
 #btn-confirmar{ margin-left:auto; background:var(--primary); color:#fff; border:0; border-radius:12px; padding:10px 16px; cursor:pointer }
 #btn-confirmar:disabled{ opacity:.5; cursor:not-allowed }
 
-/* En ≥1200px: el resumen queda dentro del ancho de la 3ª columna */
+/* En ≥1200px: el resumen dentro del ancho de la 3ª columna */
 @media (min-width: 1200px){
   #resumen{
     display:grid; grid-template-columns: 1fr 1fr 1fr; column-gap:16px;
