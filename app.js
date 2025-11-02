@@ -86,7 +86,7 @@
       els.headerImg.style.display = "none";
     }
 
-    // Ticket logo (si tenés logo en Config)
+    // Ticket logo
     if (state.config.ASSET_LOGO_URL) {
       els.tktLogo.src = state.config.ASSET_LOGO_URL;
       els.tktLogo.style.display = "block";
@@ -266,8 +266,8 @@
       WA_TEMPLATE: conf.WA_TEMPLATE,
       WA_ITEMS_BULLET: conf.WA_ITEMS_BULLET,
       WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
-      PAY_ALIAS: conf.PAY_ALIAS || "", // alias de pago
-      PAY_NOTE: conf.PAY_NOTE || "",   // nota opcional
+      PAY_ALIAS: conf.PAY_ALIAS || "",
+      PAY_NOTE: conf.PAY_NOTE || "",
     };
     applyTheme();
 
@@ -330,13 +330,26 @@
     window.open(url, "_blank");
   }
 
+  // Espera activa hasta que html2canvas esté disponible (máx 4s)
+  async function waitForHtml2Canvas() {
+    const start = Date.now();
+    while (!window.html2canvas) {
+      await new Promise(r => setTimeout(r, 100));
+      if (Date.now() - start > 4000) break;
+    }
+    return !!window.html2canvas;
+  }
+
   // ---- Ticket helpers ----
   function openTicket(order) {
-    els.tktSub.textContent = state.config.PAY_NOTE || "";
+    // No mostrar PAY_NOTE bajo el título (solo abajo)
+    els.tktSub.textContent = ""; // limpiamos
+    // Datos
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
     els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
 
+    // Items
     els.tktItems.innerHTML = "";
     order.items.forEach(it => {
       const row = document.createElement("div");
@@ -356,29 +369,26 @@
 
     els.tkt.classList.remove("hidden");
 
-    // Un solo botón: Guardar…  (siempre descarga PNG, luego el usuario comparte desde la galería/descargas)
+    // Guardar = descargar PNG (sin cerrar hasta terminar de generar)
     els.tktSave.onclick = async () => {
-      // cerrar primero
-      els.tkt.classList.add("hidden");
-
-      const run = async () => {
-        try {
-          if (!window.html2canvas) { toast("Cargando capturador… probá de nuevo en 1 segundo"); return; }
-          const canvas = await window.html2canvas(els.tktContent, { backgroundColor: "#ffffff", scale: 2 });
-          const blob = await new Promise(res => canvas.toBlob(res, "image/png", 1));
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url; a.download = `pedido-${order.idPedido}.png`;
-          a.click();
-          URL.revokeObjectURL(url);
-          toast("Imagen descargada ✓");
-        } catch {
-          toast("No se pudo guardar el comprobante");
-        }
-      };
-
-      // pequeña espera para cerrar visualmente antes de capturar
-      setTimeout(run, 50);
+      els.tktSave.disabled = true;
+      try {
+        const ready = await waitForHtml2Canvas();
+        if (!ready) { toast("No se pudo preparar el comprobante"); return; }
+        const canvas = await window.html2canvas(els.tktContent, { backgroundColor: "#ffffff", scale: 2 });
+        const blob = await new Promise(res => canvas.toBlob(res, "image/png", 1));
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `pedido-${order.idPedido}.png`; a.click();
+        URL.revokeObjectURL(url);
+        toast("Imagen descargada ✓");
+      } catch {
+        toast("No se pudo guardar el comprobante");
+      } finally {
+        els.tktSave.disabled = false;
+        // ahora sí cerramos el modal
+        els.tkt.classList.add("hidden");
+      }
     };
   }
 
