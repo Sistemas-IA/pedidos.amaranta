@@ -356,9 +356,9 @@
 
     els.tkt.classList.remove("hidden");
 
-    // Un solo botón: Guardar…  (share con imagen si se puede; fallback: descarga)
+    // Un solo botón: Guardar…  (siempre descarga PNG, luego el usuario comparte desde la galería/descargas)
     els.tktSave.onclick = async () => {
-      // cerrar primero como pediste
+      // cerrar primero
       els.tkt.classList.add("hidden");
 
       const run = async () => {
@@ -366,25 +366,18 @@
           if (!window.html2canvas) { toast("Cargando capturador… probá de nuevo en 1 segundo"); return; }
           const canvas = await window.html2canvas(els.tktContent, { backgroundColor: "#ffffff", scale: 2 });
           const blob = await new Promise(res => canvas.toBlob(res, "image/png", 1));
-          const file = new File([blob], `pedido-${order.idPedido}.png`, { type: "image/png" });
-
-          // Web Share con archivos (si está disponible)
-          if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            await navigator.share({ files: [file], title: `Pedido #${order.idPedido}` });
-          } else {
-            // Fallback: descarga local
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url; a.download = `pedido-${order.idPedido}.png`; a.click();
-            URL.revokeObjectURL(url);
-            toast("Imagen descargada ✓");
-          }
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = `pedido-${order.idPedido}.png`;
+          a.click();
+          URL.revokeObjectURL(url);
+          toast("Imagen descargada ✓");
         } catch {
           toast("No se pudo guardar el comprobante");
         }
       };
 
-      // pequeña espera para que se cierre visualmente y no corte el gesto
+      // pequeña espera para cerrar visualmente antes de capturar
       setTimeout(run, 50);
     };
   }
