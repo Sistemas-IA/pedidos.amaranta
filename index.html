@@ -28,6 +28,12 @@
     <section class="grid" id="catalogo"></section>
 
     <section id="resumen">
+      <div class="sidehdr" aria-hidden="true">
+        <img id="header-img-side" alt="Encabezado Amaranta" />
+        <div class="wrap mini">
+          <div id="conn-status-side">Cargando…</div>
+        </div>
+      </div>
       <div id="resumen-list"></div>
       <div class="bar">
         <div class="total-label"><strong>Total</strong></div>
@@ -44,60 +50,64 @@
       <div class="row">
         <div class="field" style="flex:1">
           <label for="dni">DNI</label>
-          <input id="dni" inputmode="numeric" pattern="\\d{8}" maxlength="8" placeholder="12345678" />
+          <input id="dni" inputmode="numeric" pattern="\d{8}" maxlength="8" placeholder="12345678" />
         </div>
         <div class="field" style="flex:1">
           <label for="clave">Clave</label>
-          <input id="clave" type="password" autocomplete="current-password" placeholder="Tu clave" />
+          <input id="clave" type="password" placeholder="Tu clave" />
         </div>
       </div>
       <div class="field">
-        <label for="comentarios">Comentarios</label>
-        <textarea id="comentarios" placeholder="Ej: sin sal, entregar 13:30"></textarea>
+        <label for="comentarios">Comentarios (opcional)</label>
+        <textarea id="comentarios" rows="3" placeholder="Ej: sin cebolla / entregar después de las 13:00"></textarea>
       </div>
-      <div class="actions">
-        <button id="btn-cancelar" class="btn cancel">Cancelar</button>
-        <button id="btn-enviar" class="btn primary">Enviar</button>
-      </div>
-    </div>
-  </div>
 
-  <!-- Modal Ticket / Comprobante -->
-  <div id="ticket" class="hidden" aria-modal="true" role="dialog">
-    <div class="ticket">
-      <div id="ticket-content">
-        <div class="tkt-head">
-          <img id="tkt-logo" alt="Amaranta" />
-          <div class="tkt-title">
-            <h3>Comprobante de pedido</h3>
-            <div class="tkt-sub" id="tkt-sub">—</div>
+      <div id="paybox" class="hidden paybox">
+        <div class="pay-title">Pago</div>
+        <div class="pay-row">
+          <div class="pay-col">
+            <div class="pay-label">Alias</div>
+            <div id="pay-alias" class="pay-value">—</div>
           </div>
+          <button id="btn-copy-alias" class="btn small">Copiar</button>
         </div>
-        <div class="tkt-info">
-          <div><strong>N° pedido:</strong> <span id="tkt-id">—</span></div>
-          <div><strong>Fecha:</strong> <span id="tkt-date">—</span></div>
-          <div><strong>Alias de pago:</strong> <span id="tkt-alias">—</span></div>
-        </div>
-        <div class="tkt-items" id="tkt-items"></div>
-        <div class="tkt-total">
-          <div>Total</div>
-          <div id="tkt-total">$ 0</div>
-        </div>
-        <div class="tkt-note" id="tkt-note"></div>
+        <div id="pay-note" class="pay-note"></div>
       </div>
 
-      <div class="ticket-actions">
-        <button id="tkt-save" class="btn primary">Guardar…</button>
+      <div class="actions">
+        <button id="btn-cancel" class="btn">Cancelar</button>
+        <button id="btn-send" class="btn primary">Enviar pedido</button>
       </div>
+      <div id="auth-err" class="err hidden"></div>
     </div>
   </div>
 
-  <div id="toast"></div>
+  <!-- Ticket -->
+  <div id="ticket" class="hidden">
+    <div class="ticket-card" id="ticket-card">
+      <div class="tkt-head">
+        <img id="tkt-logo" alt="Amaranta" />
+        <div class="tkt-meta">
+          <div id="tkt-title" class="tkt-title">Pedido confirmado</div>
+          <div id="tkt-id" class="tkt-sub">#</div>
+        </div>
+      </div>
+      <div id="tkt-items" class="tkt-items"></div>
+      <div class="tkt-total">
+        <div>Total</div>
+        <div id="tkt-total">$ 0</div>
+      </div>
+      <div id="tkt-note" class="tkt-note hidden"></div>
+    </div>
 
-  <!-- Config y app -->
+    <div class="tkt-actions">
+      <button id="btn-download" class="btn">Guardar imagen</button>
+      <button id="btn-new" class="btn primary">Nuevo pedido</button>
+    </div>
+  </div>
+
   <script src="/config.js"></script>
-  <!-- html2canvas para exportar imagen del ticket -->
-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
