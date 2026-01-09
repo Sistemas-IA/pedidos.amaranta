@@ -94,6 +94,14 @@ function normalizeImage(u) {
   return u;
 }
 
+function parseOrden(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
 // ---------- Helpers Config desde hoja ----------
 async function readConfigKV() {
   try {
@@ -217,7 +225,8 @@ export default async function handler(req, res) {
       const sheets = getSheets();
       const r = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_VIANDAS}!A:F`
+        // A:F antes; ahora A:G (G = Orden)
+        range: `${SHEET_VIANDAS}!A:G`
       });
 
       const values = r.data.values || [];
@@ -228,14 +237,25 @@ export default async function handler(req, res) {
         const disponible = String(row[5] ?? '').toLowerCase() === 'true';
         if (!disponible) continue;
 
+        const orden = parseOrden(row[6]); // G
         items.push({
           IdVianda: row[0],
           Nombre: row[1],
           Descripcion: row[2],
           Precio: Number(row[3]) | 0,
-          Imagen: normalizeImage(row[4])
+          Imagen: normalizeImage(row[4]),
+          _orden: orden === null ? 999999 : orden
         });
       }
+
+      // Orden ascendente por Orden (G). Si empata, por Nombre.
+      items.sort((a, b) => {
+        if (a._orden !== b._orden) return a._orden - b._orden;
+        return String(a.Nombre || '').localeCompare(String(b.Nombre || ''), 'es');
+      });
+
+      // limpiar el campo interno
+      for (const it of items) delete it._orden;
 
       return ok(res, { items });
     }
@@ -301,7 +321,7 @@ export default async function handler(req, res) {
       // --- catálogo (incluye Disponible) ---
       const rv = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_VIANDAS}!A:F`
+        range: `${SHEET_VIANDAS}!A:G`
       });
       const rowsV = (rv.data.values || []).slice(1);
       const map = new Map();
