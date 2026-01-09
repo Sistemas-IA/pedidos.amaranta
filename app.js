@@ -1,51 +1,65 @@
 (() => {
-  const cfg = window.APP_CONFIG || {};
-  const API = cfg.API_BASE_URL;
+  const cfg = (window.APP_CONFIG || {});
+  const API_BASE_URL = cfg.API_BASE_URL || "/api/pedidos";
   const API_KEY = cfg.API_KEY || "";
 
+  const state = {
+    config: null,
+    viandas: [],
+    cart: new Map(), // id -> { id, nombre, precio, qty }
+    maxQty: 9,
+    resumenMaxItems: 4
+  };
+
   const els = {
-    headerImg: document.getElementById("header-img"),
-    status: document.getElementById("conn-status"),
-    catalogo: document.getElementById("catalogo"),
-    resumenList: document.getElementById("resumen-list"),
-    resumenTotal: document.getElementById("resumen-total"),
-    btnConfirmar: document.getElementById("btn-confirmar"),
-    sheet: document.getElementById("auth-sheet"),
-    btnCancelar: document.getElementById("btn-cancelar"),
-    btnEnviar: document.getElementById("btn-enviar"),
-    dni: document.getElementById("dni"),
-    clave: document.getElementById("clave"),
-    comentarios: document.getElementById("comentarios"),
-    toast: document.getElementById("toast"),
+    app: document.getElementById("app"),
     closed: document.getElementById("closed"),
     closedTitle: document.getElementById("closed-title"),
     closedMsg: document.getElementById("closed-msg"),
     closedWA: document.getElementById("closed-wa"),
-    app: document.getElementById("app"),
-    // Ticket
-    tkt: document.getElementById("ticket"),
-    tktContent: document.getElementById("ticket-content"),
+
+    headerImg: document.getElementById("header-img"),
+    headerImgSide: document.getElementById("header-img-side"),
+    connStatus: document.getElementById("conn-status"),
+    connStatusSide: document.getElementById("conn-status-side"),
+
+    catalogo: document.getElementById("catalogo"),
+
+    resumenList: document.getElementById("resumen-list"),
+    resumenTotal: document.getElementById("resumen-total"),
+    btnConfirmar: document.getElementById("btn-confirmar"),
+
+    authSheet: document.getElementById("auth-sheet"),
+    dni: document.getElementById("dni"),
+    clave: document.getElementById("clave"),
+    comentarios: document.getElementById("comentarios"),
+    btnCancel: document.getElementById("btn-cancel"),
+    btnSend: document.getElementById("btn-send"),
+    authErr: document.getElementById("auth-err"),
+
+    paybox: document.getElementById("paybox"),
+    payAlias: document.getElementById("pay-alias"),
+    payNote: document.getElementById("pay-note"),
+    btnCopyAlias: document.getElementById("btn-copy-alias"),
+
+    ticket: document.getElementById("ticket"),
+    ticketCard: document.getElementById("ticket-card"),
     tktLogo: document.getElementById("tkt-logo"),
-    tktSub: document.getElementById("tkt-sub"),
     tktId: document.getElementById("tkt-id"),
-    tktDate: document.getElementById("tkt-date"),
-    tktAlias: document.getElementById("tkt-alias"),
     tktItems: document.getElementById("tkt-items"),
     tktTotal: document.getElementById("tkt-total"),
     tktNote: document.getElementById("tkt-note"),
-    tktSave: document.getElementById("tkt-save"),
+    btnDownload: document.getElementById("btn-download"),
+    btnNew: document.getElementById("btn-new"),
+    tktTitle: document.getElementById("tkt-title")
   };
 
-  const state = {
-    config: {},
-    catalogo: [],
-    cart: new Map(),
-    ip: null,
-    lastOrder: null,
-  };
+  function setConn(msg) {
+    if (els.connStatus) els.connStatus.textContent = msg;
+    if (els.connStatusSide) els.connStatusSide.textContent = msg;
+  }
 
-  // ===== Helpers imágenes (Drive + Blob) =====
-  function normalizeImageUrl(u) {
+  function normalizeDrive(u) {
     if (!u) return "";
     u = String(u).trim();
     let m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/);
@@ -62,29 +76,41 @@
     catch { return String(n); }
   }
 
-  function toast(msg, hold=false) {
-    els.toast.textContent = msg;
-    els.toast.classList.add("show");
-    if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2000);
+  function applyTheme(cfg) {
+    const root = document.documentElement.style;
+    if (cfg.THEME_PRIMARY) root.setProperty("--primary", cfg.THEME_PRIMARY);
+    if (cfg.THEME_SECONDARY) root.setProperty("--secondary", cfg.THEME_SECONDARY);
+    if (cfg.THEME_BG) root.setProperty("--bg", cfg.THEME_BG);
+    if (cfg.THEME_TEXT) root.setProperty("--text", cfg.THEME_TEXT);
+    if (cfg.RADIUS) root.setProperty("--radius", `${parseInt(cfg.RADIUS, 10) || 16}px`);
+    if (cfg.SPACING) root.setProperty("--spacing", `${parseInt(cfg.SPACING, 10) || 10}px`);
   }
 
-  // ===== THEME / Assets =====
-  function applyTheme() {
-    const t = state.config.THEME || {};
-    const root = document.documentElement;
-    if (t.PRIMARY) root.style.setProperty("--primary", t.PRIMARY);
-    if (t.SECONDARY) root.style.setProperty("--secondary", t.SECONDARY);
-    if (t.BG) root.style.setProperty("--bg", t.BG);
-    if (t.TEXT) root.style.setProperty("--text", t.TEXT);
-    if (t.RADIUS != null) root.style.setProperty("--radius", t.RADIUS + "px");
-    if (t.SPACING != null) root.style.setProperty("--space", t.SPACING + "px");
+  function shouldSplitLayout() {
+    try {
+      const on =
+        window.matchMedia("(min-width: 960px) and (orientation: landscape)").matches;
+      document.body.classList.toggle("split", on);
+      return on;
+    } catch {
+      return false;
+    }
+  }
 
-    // Banner
-    if (state.config.ASSET_HEADER_URL) {
-      els.headerImg.src = state.config.ASSET_HEADER_URL;
-      els.headerImg.style.display = "block";
+  function setupHeaderImages() {
+    const u = normalizeDrive(state.config.ASSET_HEADER_URL || "");
+    if (u) {
+      if (els.headerImg) {
+        els.headerImg.src = u;
+        els.headerImg.style.display = "block";
+      }
+      if (els.headerImgSide) {
+        els.headerImgSide.src = u;
+        els.headerImgSide.style.display = "block";
+      }
     } else {
-      els.headerImg.style.display = "none";
+      if (els.headerImg) els.headerImg.style.display = "none";
+      if (els.headerImgSide) els.headerImgSide.style.display = "none";
     }
 
     // Ticket logo
@@ -99,423 +125,568 @@
     }
   }
 
-  // ===== Catálogo / Cards =====
-  function buildControls(v, current) {
-    const frag = document.createDocumentFragment();
-    if (current === 0) {
-      const plus = document.createElement("button");
-      plus.className = "plus";
-      plus.textContent = "+";
-      plus.addEventListener("click", () => updateQty(v, 1));
-      frag.appendChild(plus);
+  function setClosedScreen() {
+    els.app.classList.add("hidden");
+    els.ticket.classList.add("hidden");
+    els.closed.classList.remove("hidden");
+
+    els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
+    els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp.";
+
+    const waOn = String(state.config.WA_ENABLED || "").toLowerCase() === "true";
+    const phone = (state.config.WA_PHONE_TARGET || "").trim();
+    const template = (state.config.WA_TEMPLATE || "").trim();
+
+    if (waOn && phone) {
+      els.closedWA.classList.remove("hidden");
+      els.closedWA.onclick = () => {
+        const txt = template ? encodeURIComponent(template) : "";
+        const url = `https://wa.me/${encodeURIComponent(phone)}${txt ? `?text=${txt}` : ""}`;
+        window.open(url, "_blank", "noopener,noreferrer");
+      };
     } else {
-      const pill = document.createElement("div");
-      pill.className = "qty";
-      const minusBtn = document.createElement("button"); minusBtn.textContent = "–";
-      const n = document.createElement("span"); n.className = "n"; n.textContent = current;
-      const plusBtn = document.createElement("button"); plusBtn.textContent = "+";
-      minusBtn.addEventListener("click", () => updateQty(v, current - 1));
-      plusBtn.addEventListener("click", () => updateQty(v, current + 1));
-      pill.append(minusBtn, n, plusBtn);
-      frag.appendChild(pill);
+      els.closedWA.classList.add("hidden");
     }
-    return frag;
+  }
+
+  function setOpenScreen() {
+    els.closed.classList.add("hidden");
+    els.ticket.classList.add("hidden");
+    els.app.classList.remove("hidden");
+  }
+
+  function emptyStateCard() {
+    const div = document.createElement("div");
+    div.className = "card";
+    div.innerHTML = `
+      <div class="body">
+        <h3>${state.config.MSG_EMPTY || "No hay viandas disponibles por ahora."}</h3>
+        <p>Volvé más tarde o consultanos por WhatsApp.</p>
+      </div>
+    `;
+    return div;
   }
 
   function buildCard(v) {
     const card = document.createElement("article");
     card.className = "card";
-    card.dataset.id = v.IdVianda;
 
-    // IMG
-    const imgBox = document.createElement("div");
-    imgBox.className = "card-img";
+    const imgWrap = document.createElement("div");
+    imgWrap.className = "img";
+
     const img = document.createElement("img");
-    img.alt = v.Nombre; img.loading = "lazy"; img.decoding = "async";
+    const placeholder = normalizeDrive(state.config.ASSET_PLACEHOLDER_IMG_URL || "");
+    const src = normalizeDrive(v.Imagen || "");
+    img.alt = v.Nombre || "Vianda";
 
-    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL ||
-      (window.location.origin + "/assets/placeholder.png");
-    const srcNorm = normalizeImageUrl(v.Imagen);
-    const driveAlt = srcNorm && isGoogleDrive(srcNorm)
-      ? srcNorm.replace("export=view", "export=download") : "";
-    img.src = placeholder;
-    if (srcNorm) {
-      const probe = new Image();
-      if (isGoogleDrive(srcNorm)) probe.referrerPolicy = "no-referrer";
-      probe.onload = () => { img.src = srcNorm; };
-      probe.onerror = () => {
-        if (driveAlt) {
-          const probe2 = new Image();
-          probe2.referrerPolicy = "no-referrer";
-          probe2.onload = () => { img.src = driveAlt; };
-          probe2.onerror = () => { img.src = placeholder; };
-          probe2.src = driveAlt;
-        } else { img.src = placeholder; }
-      };
-      probe.src = srcNorm;
+    if (src) {
+      img.src = src;
+    } else if (placeholder) {
+      img.src = placeholder;
     }
-    imgBox.appendChild(img);
 
-    // BODY
+    img.loading = "lazy";
+    img.decoding = "async";
+    imgWrap.appendChild(img);
+
     const body = document.createElement("div");
-    body.className = "card-body";
-    const title = document.createElement("h3");
-    title.className = "card-title"; title.textContent = v.Nombre;
-    const desc = document.createElement("div");
-    desc.className = "card-desc"; desc.textContent = v.Descripcion || "";
+    body.className = "body";
 
-    const bottom = document.createElement("div");
-    bottom.className = "card-bottom";
+    const h3 = document.createElement("h3");
+    h3.textContent = v.Nombre || "";
+    const p = document.createElement("p");
+    p.textContent = v.Descripcion || "";
+
+    const row = document.createElement("div");
+    row.className = "row";
+
     const price = document.createElement("div");
-    price.className = "card-price";
-    price.textContent = "$ " + fmtMoney(v.Precio);
+    price.className = "price";
+    price.textContent = `$ ${fmtMoney(v.Precio || 0)}`;
 
-    const controlsBox = document.createElement("div");
-    const current = state.cart.get(v.IdVianda)?.cantidad || 0;
-    controlsBox.appendChild(buildControls(v, current));
+    const qty = document.createElement("div");
+    qty.className = "qty";
 
-    bottom.append(price, controlsBox);
-    body.append(title, desc, bottom);
-    card.append(imgBox, body);
+    const btnMinus = document.createElement("button");
+    btnMinus.type = "button";
+    btnMinus.textContent = "−";
+
+    const num = document.createElement("div");
+    num.className = "num";
+    num.textContent = String(getQty(v.IdVianda));
+
+    const btnPlus = document.createElement("button");
+    btnPlus.type = "button";
+    btnPlus.textContent = "+";
+
+    btnMinus.addEventListener("click", () => changeQty(v, -1));
+    btnPlus.addEventListener("click", () => changeQty(v, +1));
+
+    qty.appendChild(btnMinus);
+    qty.appendChild(num);
+    qty.appendChild(btnPlus);
+
+    row.appendChild(price);
+    row.appendChild(qty);
+
+    body.appendChild(h3);
+    body.appendChild(p);
+    body.appendChild(row);
+
+    card.appendChild(imgWrap);
+    card.appendChild(body);
+
+    card.__qtyEl = num;
     return card;
   }
 
-  function renderCatalogo() {
-    els.catalogo.innerHTML = "";
-    if (!state.catalogo.length) {
-      const empty = document.createElement("div");
-      empty.textContent = state.config.MSG_EMPTY || "No hay viandas disponibles por ahora.";
-      empty.className = "card";
-      els.catalogo.appendChild(empty);
-      return;
+  function getQty(id) {
+    const it = state.cart.get(String(id));
+    return it ? it.qty : 0;
+  }
+
+  function changeQty(v, delta) {
+    const id = String(v.IdVianda);
+    const cur = getQty(id);
+    let next = cur + delta;
+    if (next < 0) next = 0;
+    if (next > state.maxQty) {
+      toast(state.config.MSG_LIMIT || `Máximo ${state.maxQty} por vianda.`);
+      next = state.maxQty;
     }
-    for (const v of state.catalogo) els.catalogo.appendChild(buildCard(v));
+
+    if (next === 0) state.cart.delete(id);
+    else state.cart.set(id, { id, nombre: v.Nombre, precio: v.Precio, qty: next });
+
+    // actualizar num en card
+    for (const child of els.catalogo.children) {
+      if (child && child.__qtyEl && child.querySelector && child.querySelector("h3")?.textContent === v.Nombre) {
+        // nada
+      }
+    }
+    renderCatalogQuantities();
+    renderResumen();
+  }
+
+  function renderCatalogQuantities() {
+    // Recalcular numeritos en todas las cards
+    const cards = els.catalogo.querySelectorAll(".card");
+    cards.forEach((card) => {
+      const name = card.querySelector("h3")?.textContent || "";
+      const v = state.viandas.find(x => String(x.Nombre || "") === String(name));
+      if (!v) return;
+      const q = getQty(v.IdVianda);
+      const num = card.querySelector(".num");
+      if (num) num.textContent = String(q);
+    });
+  }
+
+  function computeTotal() {
+    let t = 0;
+    for (const it of state.cart.values()) {
+      t += (Number(it.precio) || 0) * (Number(it.qty) || 0);
+    }
+    return t;
   }
 
   function renderResumen() {
     els.resumenList.innerHTML = "";
-    let total = 0;
-    const items = Array.from(state.cart.values());
-    items.forEach(it => total += (it.precio * it.cantidad));
 
-    items.slice(0, (state.config.UI_RESUMEN_ITEMS_VISIBLES || 4)).forEach(it => {
+    const arr = Array.from(state.cart.values());
+    if (!arr.length) {
+      const empty = document.createElement("div");
+      empty.style.padding = "10px 12px";
+      empty.style.color = "var(--muted)";
+      empty.style.fontSize = "13px";
+      empty.innerHTML = "Tu carrito está vacío.";
+      els.resumenList.appendChild(empty);
+      els.resumenTotal.textContent = "$ 0";
+      els.btnConfirmar.disabled = true;
+      return;
+    }
+
+    // Mostrar máximo N ítems en resumen (para que sea prolijo)
+    const maxShow = state.resumenMaxItems || 4;
+    const show = arr.slice(0, maxShow);
+
+    show.forEach((it) => {
       const row = document.createElement("div");
-      row.className = "resumen-item";
+      row.className = "res-item";
+
       const left = document.createElement("div");
-      left.className = "resumen-left";
-      left.textContent = `${it.cantidad}× ${it.nombre}`;
+      left.className = "left";
+
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = it.nombre;
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = `$ ${fmtMoney(it.precio)} c/u`;
+
+      left.appendChild(name);
+      left.appendChild(meta);
+
       const right = document.createElement("div");
-      right.className = "resumen-right";
-      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
-      row.append(left, right);
+      right.className = "right";
+
+      const mini = document.createElement("div");
+      mini.className = "mini";
+
+      const bM = document.createElement("button");
+      bM.type = "button";
+      bM.textContent = "−";
+      bM.addEventListener("click", () => {
+        const v = state.viandas.find(x => String(x.IdVianda) === String(it.id));
+        if (v) changeQty(v, -1);
+      });
+
+      const n = document.createElement("div");
+      n.style.minWidth = "18px";
+      n.style.textAlign = "center";
+      n.style.fontWeight = "900";
+      n.textContent = String(it.qty);
+
+      const bP = document.createElement("button");
+      bP.type = "button";
+      bP.textContent = "+";
+      bP.addEventListener("click", () => {
+        const v = state.viandas.find(x => String(x.IdVianda) === String(it.id));
+        if (v) changeQty(v, +1);
+      });
+
+      mini.appendChild(bM);
+      mini.appendChild(n);
+      mini.appendChild(bP);
+
+      const sub = document.createElement("div");
+      sub.className = "subtotal";
+      sub.textContent = `$ ${fmtMoney((it.precio || 0) * (it.qty || 0))}`;
+
+      right.appendChild(mini);
+      right.appendChild(sub);
+
+      row.appendChild(left);
+      row.appendChild(right);
       els.resumenList.appendChild(row);
     });
 
-    els.resumenTotal.textContent = "$ " + fmtMoney(total);
-    els.btnConfirmar.disabled = total <= 0;
-  }
-
-  function patchCardControls(id, v, n) {
-    const card = els.catalogo.querySelector(`[data-id="${id}"]`);
-    if (!card) return;
-    const bottom = card.querySelector(".card-bottom");
-    if (!bottom) return;
-    const newControls = buildControls(v, n);
-    const oldControls = bottom.lastElementChild;
-    if (oldControls) bottom.replaceChild(newControls, oldControls);
-    else bottom.appendChild(newControls);
-  }
-
-  function updateQty(v, n) {
-    const max = Number(state.config.UI_MAX_QTY_POR_VIANDA || 9);
-    if (n < 0) n = 0;
-    if (n > max) { toast(state.config.MSG_LIMIT || "Máximo 9 por vianda."); n = max; }
-    if (n === 0) state.cart.delete(v.IdVianda);
-    else state.cart.set(v.IdVianda, { id: v.IdVianda, nombre: v.Nombre, precio: Number(v.Precio), cantidad: n });
-    patchCardControls(v.IdVianda, v, n);
-    renderResumen();
-  }
-
-  async function getIP() {
-    try {
-      const res = await fetch("https://api.ipify.org?format=json");
-      const j = await res.json(); state.ip = j.ip;
-    } catch {}
-  }
-
-  // ===== Config desde API =====
-  async function loadConfig() {
-    els.status.textContent = "Obteniendo configuración…";
-    const res = await fetch(API + "?route=ui-config", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
-    const conf = await res.json();
-    state.config = {
-      THEME: {
-        PRIMARY: conf.THEME_PRIMARY,
-        SECONDARY: conf.THEME_SECONDARY,
-        BG: conf.THEME_BG,
-        TEXT: conf.THEME_TEXT,
-        RADIUS: Number(conf.RADIUS || 16),
-        SPACING: Number(conf.SPACING || 8),
-      },
-      ASSET_HEADER_URL: conf.ASSET_HEADER_URL || "",
-      ASSET_LOGO_URL: conf.ASSET_LOGO_URL || "",
-      ASSET_PLACEHOLDER_IMG_URL: conf.ASSET_PLACEHOLDER_IMG_URL || "",
-      FORM_ENABLED: String(conf.FORM_ENABLED || "true").toLowerCase() === "true",
-      FORM_CLOSED_TITLE: conf.FORM_CLOSED_TITLE,
-      FORM_CLOSED_MESSAGE: conf.FORM_CLOSED_MESSAGE,
-      UI_RESUMEN_ITEMS_VISIBLES: Number(conf.UI_RESUMEN_ITEMS_VISIBLES || 4),
-      UI_MAX_QTY_POR_VIANDA: Number(conf.UI_MAX_QTY_POR_VIANDA || 9),
-      MSG_EMPTY: conf.MSG_EMPTY,
-      MSG_AUTH_FAIL: conf.MSG_AUTH_FAIL,
-      MSG_LIMIT: conf.MSG_LIMIT,
-      MSG_SERVER_FAIL: conf.MSG_SERVER_FAIL,
-      MSG_SUCCESS: conf.MSG_SUCCESS,
-      WA_ENABLED: String(conf.WA_ENABLED || "true").toLowerCase() === "true",
-      WA_TEMPLATE: conf.WA_TEMPLATE,
-      WA_ITEMS_BULLET: conf.WA_ITEMS_BULLET,
-      WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
-      PAY_ALIAS: conf.PAY_ALIAS || "",
-      PAY_NOTE: conf.PAY_NOTE || "",
-    };
-    applyTheme();
-
-    if (!state.config.FORM_ENABLED) {
-      els.app.classList.add("hidden");
-      els.closed.classList.remove("hidden");
-      els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
-      els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp. Volvé más tarde o escribinos.";
-      if (state.config.WA_ENABLED) {
-        els.closedWA.classList.remove("hidden");
-        els.closedWA.addEventListener("click", () => shareWA({closed:true}));
-      }
-      els.status.textContent = "Formulario cerrado";
-      return false;
+    if (arr.length > maxShow) {
+      const more = document.createElement("div");
+      more.style.padding = "2px 12px 10px";
+      more.style.color = "var(--muted)";
+      more.style.fontSize = "12px";
+      more.textContent = `+${arr.length - maxShow} item(s) más en el carrito`;
+      els.resumenList.appendChild(more);
     }
-    els.status.textContent = "Configuración cargada";
-    return true;
+
+    const total = computeTotal();
+    els.resumenTotal.textContent = `$ ${fmtMoney(total)}`;
+    els.btnConfirmar.disabled = false;
   }
 
-  async function loadCatalogo() {
-    els.status.textContent = "Cargando catálogo…";
-    const res = await fetch(API + "?route=viandas", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
-    const data = await res.json();
-    if (data.closed) { els.status.textContent = "Formulario cerrado"; return; }
-    state.catalogo = Array.isArray(data.items) ? data.items : [];
-    renderCatalogo();
-    els.status.textContent = "Catálogo actualizado ✓";
-  }
-
-  function openSheet() { els.sheet.classList.remove("hidden"); }
-  function closeSheet() { els.sheet.classList.add("hidden"); }
-
-  function buildWA(items, idPedido, total) {
-    const tmpl = state.config.WA_TEMPLATE || "Pedido #{IDPEDIDO} por ${TOTAL}\n{ITEMS}\nAlias: {ALIAS}";
-    const line = state.config.WA_ITEMS_BULLET || "- {CANT}× {NOMBRE} — ${SUBTOTAL}";
-    const itemsStr = items.map(it => line
-      .replace("{CANT}", it.cantidad)
-      .replace("{NOMBRE}", it.nombre)
-      .replace("${SUBTOTAL}", fmtMoney(it.precio * it.cantidad))
-    ).join("\n");
-    return tmpl
-      .replace("{IDPEDIDO}", idPedido)
-      .replace("${TOTAL}", fmtMoney(total))
-      .replace("{ITEMS}", itemsStr)
-      .replace("{ALIAS}", state.config.PAY_ALIAS || "")
-      .replace("{FECHA}", new Date().toLocaleDateString("es-AR"))
-      .replace("{HORA}", new Date().toLocaleTimeString("es-AR", {hour: "2-digit", minute:"2-digit"}));
-  }
-
-  function shareWA(payload) {
-    if (payload?.closed) {
-      const msg = (state.config.FORM_CLOSED_TITLE || "") + "\n" + (state.config.FORM_CLOSED_MESSAGE || "");
-      const url = "https://wa.me/" + (state.config.WA_PHONE_TARGET || "") + "?text=" + encodeURIComponent(msg);
-      window.open(url, "_blank"); return;
+  function renderCatalog() {
+    els.catalogo.innerHTML = "";
+    if (!state.viandas.length) {
+      els.catalogo.appendChild(emptyStateCard());
+      return;
     }
-    const items = Array.from(state.cart.values());
-    let total = 0; items.forEach(it => total += (it.precio * it.cantidad));
-    const text = buildWA(items, payload.idPedido, total);
-    const url = "https://wa.me/" + (state.config.WA_PHONE_TARGET || "") + "?text=" + encodeURIComponent(text);
-    window.open(url, "_blank");
-  }
-
-  async function waitForHtml2Canvas() {
-    const start = Date.now();
-    while (!window.html2canvas) {
-      await new Promise(r => setTimeout(r, 100));
-      if (Date.now() - start > 4000) break;
-    }
-    return !!window.html2canvas;
-  }
-
-  // ===== Inline de imágenes dentro del ticket para que salgan en la captura =====
-  function sameOrigin(url) {
-    try {
-      const u = new URL(url, window.location.href);
-      return u.origin === window.location.origin;
-    } catch { return false; }
-  }
-
-  async function urlToDataURL(url) {
-    // Intenta traer como blob (CORS); si falla, lanza error
-    const resp = await fetch(url, { mode: 'cors', cache: 'no-store' });
-    if (!resp.ok) throw new Error('fetch-failed');
-    const blob = await resp.blob();
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
+    state.viandas.forEach((v) => {
+      els.catalogo.appendChild(buildCard(v));
     });
+    renderCatalogQuantities();
   }
 
-  async function inlineTicketImages(rootEl) {
-    const imgs = Array.from(rootEl.querySelectorAll('img'));
-    const restores = [];
-    for (const img of imgs) {
-      const src = img.getAttribute('src') || '';
-      if (!src) continue;
-      if (src.startsWith('data:')) continue; // ya inline
-      // si es mismo origen o ruta absoluta local, no hace falta
-      if (sameOrigin(src) || src.startsWith('/')) continue;
+  function showAuthSheet() {
+    els.authErr.classList.add("hidden");
+    els.authErr.textContent = "";
+    els.authSheet.classList.remove("hidden");
+    setTimeout(() => els.dni?.focus(), 40);
+  }
+  function hideAuthSheet() {
+    els.authSheet.classList.add("hidden");
+  }
 
-      try {
-        const dataURL = await urlToDataURL(src);
-        const old = img.src;
-        img.src = dataURL;
-        restores.push(() => { img.src = old; });
-      } catch {
-        // no se pudo inlinear (CORS), seguimos: saldrá sin esa imagen
-      }
+  function toast(msg) {
+    // toast bien simple
+    const t = document.createElement("div");
+    t.style.position = "fixed";
+    t.style.left = "50%";
+    t.style.bottom = "18px";
+    t.style.transform = "translateX(-50%)";
+    t.style.background = "rgba(17,24,39,.95)";
+    t.style.color = "#fff";
+    t.style.padding = "10px 12px";
+    t.style.borderRadius = "14px";
+    t.style.fontSize = "13px";
+    t.style.fontWeight = "800";
+    t.style.zIndex = "999";
+    t.style.maxWidth = "92vw";
+    t.style.textAlign = "center";
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 1800);
+  }
+
+  function fillPayBox() {
+    const alias = (state.config.PAY_ALIAS || "").trim();
+    const note = (state.config.PAY_NOTE || "").trim();
+
+    if (!alias && !note) {
+      els.paybox.classList.add("hidden");
+      return;
     }
-    return () => { restores.forEach(fn => fn()); };
+    els.paybox.classList.remove("hidden");
+    els.payAlias.textContent = alias || "—";
+
+    if (note) {
+      els.payNote.textContent = note;
+      els.payNote.classList.remove("hidden");
+    } else {
+      els.payNote.textContent = "";
+      els.payNote.classList.add("hidden");
+    }
   }
 
-  // ---- Ticket ----
-  function openTicket(order) {
-    // No mostrar PAY_NOTE bajo el título
-    els.tktSub.textContent = "";
-    els.tktId.textContent = order.idPedido;
-    els.tktDate.textContent = order.fecha;
-    els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
+  async function copyText(txt) {
+    try {
+      await navigator.clipboard.writeText(txt);
+      toast("Copiado");
+    } catch {
+      // fallback
+      const ta = document.createElement("textarea");
+      ta.value = txt;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      toast("Copiado");
+    }
+  }
+
+  function buildPayload() {
+    const items = [];
+    for (const it of state.cart.values()) {
+      items.push({ idVianda: it.id, cantidad: it.qty });
+    }
+    return {
+      dni: String(els.dni.value || "").trim(),
+      clave: String(els.clave.value || "").trim(),
+      comentarios: String(els.comentarios.value || "").trim(),
+      items,
+      ua: navigator.userAgent
+    };
+  }
+
+  function showAuthError(msg) {
+    els.authErr.textContent = msg;
+    els.authErr.classList.remove("hidden");
+  }
+
+  function setTicket(data, comentarios) {
+    els.app.classList.add("hidden");
+    els.closed.classList.add("hidden");
+    els.ticket.classList.remove("hidden");
+
+    els.tktTitle.textContent = "Pedido confirmado";
+    els.tktId.textContent = `#${data.idPedido}`;
 
     els.tktItems.innerHTML = "";
-    order.items.forEach(it => {
+    const arr = Array.from(state.cart.values());
+
+    arr.forEach((it) => {
       const row = document.createElement("div");
-      row.className = "tkt-row";
-      const left = document.createElement("div");
-      left.className = "tkt-left";
-      left.textContent = `${it.cantidad}× ${it.nombre}`;
-      const right = document.createElement("div");
-      right.className = "tkt-right";
-      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
-      row.append(left, right);
+      row.className = "tkt-item";
+      row.innerHTML = `<div>${it.qty}× ${it.nombre}</div><div>$ ${fmtMoney(it.precio * it.qty)}</div>`;
       els.tktItems.appendChild(row);
     });
 
-    els.tktTotal.textContent = "$ " + fmtMoney(order.total);
-    els.tktNote.textContent = state.config.PAY_NOTE || "";
+    const total = computeTotal();
+    els.tktTotal.textContent = `$ ${fmtMoney(total)}`;
 
-    els.tkt.classList.remove("hidden");
-
-    // Guardar = descargar PNG (con inline de imágenes y useCORS)
-    els.tktSave.onclick = async () => {
-      els.tktSave.disabled = true;
-      try {
-        const ready = await waitForHtml2Canvas();
-        if (!ready) { toast("No se pudo preparar el comprobante"); return; }
-
-        // Inlinear imágenes del ticket (logo y cualquier otra)
-        const restore = await inlineTicketImages(els.tktContent);
-
-        const canvas = await window.html2canvas(els.tktContent, {
-          backgroundColor: "#ffffff",
-          scale: 2,
-          useCORS: true,
-          allowTaint: false,
-        });
-        const blob = await new Promise(res => canvas.toBlob(res, "image/png", 1));
-        restore(); // restaurar src originales
-
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = `pedido-${order.idPedido}.png`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toast("Imagen descargada ✓");
-      } catch {
-        toast("No se pudo guardar el comprobante");
-      } finally {
-        els.tktSave.disabled = false;
-        els.tkt.classList.add("hidden");
-      }
-    };
+    const note = (comentarios || "").trim();
+    if (note) {
+      els.tktNote.textContent = `Comentarios: ${note}`;
+      els.tktNote.classList.remove("hidden");
+    } else {
+      els.tktNote.textContent = "";
+      els.tktNote.classList.add("hidden");
+    }
   }
 
-  async function enviarPedido() {
-    const dni = els.dni.value.trim();
-    const clave = els.clave.value.trim();
-    const comentarios = els.comentarios.value.trim();
+  async function inlineImagesForTicket() {
+    // Para evitar ticket “en blanco” por CORS: intentamos inlinear imágenes de Drive
+    const imgs = els.ticketCard.querySelectorAll("img");
+    for (const img of imgs) {
+      if (!img || !img.src) continue;
+      const src = img.src;
+      if (!isGoogleDrive(src)) continue;
 
-    if (!/^\d{8}$/.test(dni) || dni.startsWith("0")) {
-      toast("DNI inválido (8 dígitos, no comienza con 0)."); return;
+      try {
+        const r = await fetch(src, { mode: "cors" });
+        const blob = await r.blob();
+        const fr = new FileReader();
+        const dataUrl = await new Promise((resolve, reject) => {
+          fr.onload = () => resolve(fr.result);
+          fr.onerror = reject;
+          fr.readAsDataURL(blob);
+        });
+        img.src = String(dataUrl);
+      } catch {
+        // si falla, dejamos el src original
+      }
     }
-    if (!clave) { toast("Ingresá tu clave."); return; }
+  }
 
-    const cartItems = Array.from(state.cart.values());
-    if (!cartItems.length) { toast("Tu carrito está vacío."); return; }
+  async function downloadTicketPng() {
+    try {
+      await inlineImagesForTicket();
+      const canvas = await window.html2canvas(els.ticketCard, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true
+      });
+      const a = document.createElement("a");
+      a.href = canvas.toDataURL("image/png");
+      a.download = `pedido-${els.tktId.textContent.replace("#", "")}.png`;
+      a.click();
+    } catch {
+      toast("No se pudo generar la imagen");
+    }
+  }
 
-    els.btnEnviar.disabled = true;
-    els.btnEnviar.textContent = "Enviando…";
+  function resetForNew() {
+    state.cart.clear();
+    els.dni.value = "";
+    els.clave.value = "";
+    els.comentarios.value = "";
+
+    els.ticket.classList.add("hidden");
+    setOpenScreen();
+    renderCatalog();
+    renderResumen();
+  }
+
+  async function loadConfig() {
+    setConn("Cargando configuración…");
+    const url = `${API_BASE_URL}?route=ui-config`;
+    const r = await fetch(url);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "CONFIG_FAIL");
+    state.config = j;
+    state.maxQty = parseInt(j.UI_MAX_QTY_POR_VIANDA || "9", 10) || 9;
+    state.resumenMaxItems = parseInt(j.UI_RESUMEN_ITEMS_VISIBLES || "4", 10) || 4;
+
+    applyTheme(j);
+    setupHeaderImages();
+    fillPayBox();
+
+    const enabled = String(j.FORM_ENABLED || "true").toLowerCase() === "true";
+    if (!enabled) setClosedScreen();
+    else setOpenScreen();
+
+    setConn("Listo");
+  }
+
+  async function loadViandas() {
+    setConn("Cargando viandas…");
+    const url = `${API_BASE_URL}?route=viandas`;
+    const r = await fetch(url);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "VIANDAS_FAIL");
+    state.viandas = (j.items || []).map((x) => ({
+      ...x,
+      Imagen: normalizeDrive(x.Imagen || "")
+    }));
+    setConn("Listo");
+  }
+
+  async function sendPedido() {
+    els.btnSend.disabled = true;
+    els.btnSend.textContent = "Enviando…";
+    els.authErr.classList.add("hidden");
+
+    const payload = buildPayload();
+    const headers = { "Content-Type": "application/json" };
+    if (API_KEY) headers["X-API-Key"] = API_KEY;
 
     try {
-      const payloadItems = cartItems.map(it => ({ idVianda: it.id, nombre: it.nombre, cantidad: it.cantidad }));
-      const res = await fetch(API + "?route=pedido", {
+      const r = await fetch(`${API_BASE_URL}?route=pedido`, {
         method: "POST",
-        headers: Object.assign({ "Content-Type": "application/json" }, API_KEY ? { "X-API-Key": API_KEY } : {}),
-        body: JSON.stringify({ dni, clave, comentarios, items: payloadItems, ip: state.ip, ua: navigator.userAgent })
+        headers,
+        body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data && data.error === "FORM_CLOSED") toast(state.config.FORM_CLOSED_MESSAGE || "Formulario cerrado.");
-        else toast(state.config.MSG_AUTH_FAIL || "No se pudo procesar.");
-        els.btnEnviar.disabled = false; els.btnEnviar.textContent = "Enviar"; return;
+      const j = await r.json().catch(() => ({}));
+
+      if (!r.ok || !j.ok) {
+        const code = j.error || "SERVER_FAIL";
+        if (code === "AUTH_FAIL") {
+          showAuthError(state.config.MSG_AUTH_FAIL || "DNI o clave incorrectos o cliente no validado.");
+        } else if (code === "FORM_CLOSED") {
+          showAuthError("Los pedidos están cerrados en este momento.");
+        } else if (code === "NO_ITEMS") {
+          showAuthError("Tu carrito quedó vacío. Revisá e intentá de nuevo.");
+        } else {
+          showAuthError(state.config.MSG_SERVER_FAIL || "No pudimos completar el pedido. Probá más tarde.");
+        }
+        return;
       }
-      // Éxito → construir order antes de limpiar carrito
-      const id = data.idPedido;
-      let total = 0; cartItems.forEach(it => total += (it.precio * it.cantidad));
-      const order = {
-        idPedido: id,
-        items: cartItems.map(x => ({ nombre: x.nombre, cantidad: x.cantidad, precio: x.precio })),
-        total,
-        fecha: new Date().toLocaleString("es-AR", { hour: "2-digit", minute:"2-digit", day:"2-digit", month:"2-digit", year:"2-digit" })
-      };
-      state.lastOrder = order;
 
-      closeSheet();
-      openTicket(order);
+      hideAuthSheet();
+      setTicket(j, payload.comentarios);
 
-      state.cart.clear();
-      renderCatalogo();
-      renderResumen();
-
-    } catch (e) {
-      toast(state.config.MSG_SERVER_FAIL || "No pudimos completar el pedido.");
+    } catch {
+      showAuthError(state.config.MSG_SERVER_FAIL || "No pudimos completar el pedido. Probá más tarde.");
     } finally {
-      els.btnEnviar.disabled = false; els.btnEnviar.textContent = "Enviar";
+      els.btnSend.disabled = false;
+      els.btnSend.textContent = "Enviar pedido";
     }
   }
 
-  // Events
-  document.getElementById("btn-confirmar").addEventListener("click", () => els.sheet.classList.remove("hidden"));
-  document.getElementById("btn-cancelar").addEventListener("click", () => els.sheet.classList.add("hidden"));
-  document.getElementById("btn-enviar").addEventListener("click", enviarPedido);
+  function wireEvents() {
+    els.btnConfirmar.addEventListener("click", () => {
+      showAuthSheet();
+    });
+    els.btnCancel.addEventListener("click", () => hideAuthSheet());
+    els.authSheet.addEventListener("click", (e) => {
+      if (e.target === els.authSheet) hideAuthSheet();
+    });
+    els.btnSend.addEventListener("click", sendPedido);
 
-  // Boot
-  (async function boot(){
-    await getIP();
-    const ok = await loadConfig();
-    if (!ok) return;
-    await loadCatalogo();
-    renderResumen();
-  })();
+    if (els.btnCopyAlias) {
+      els.btnCopyAlias.addEventListener("click", () => {
+        const alias = (state.config?.PAY_ALIAS || "").trim();
+        if (!alias) return;
+        copyText(alias);
+      });
+    }
+
+    els.btnDownload.addEventListener("click", downloadTicketPng);
+    els.btnNew.addEventListener("click", resetForNew);
+
+    // Reaccionar a resize/orientation para activar body.split
+    window.addEventListener("resize", () => shouldSplitLayout());
+    window.addEventListener("orientationchange", () => shouldSplitLayout());
+  }
+
+  async function init() {
+    try {
+      shouldSplitLayout();
+      wireEvents();
+      await loadConfig();
+      // Si está cerrado, no cargamos catálogo
+      const enabled = String(state.config.FORM_ENABLED || "true").toLowerCase() === "true";
+      if (!enabled) return;
+
+      await loadViandas();
+      renderCatalog();
+      renderResumen();
+    } catch (e) {
+      console.error(e);
+      setConn("Error");
+      toast("Error cargando la app");
+    }
+  }
+
+  init();
 })();
