@@ -43,7 +43,6 @@
     catalogo: [],
     cart: new Map(),
     ip: null,
-    lastOrder: null,
   };
 
   function setStatus(msg) {
@@ -51,7 +50,6 @@
     if (els.statusSide) els.statusSide.textContent = msg;
   }
 
-  // ===== Helpers imágenes (Drive + Blob) =====
   function normalizeImageUrl(u) {
     if (!u) return "";
     u = String(u).trim();
@@ -75,7 +73,6 @@
     setTimeout(() => els.toast.classList.remove("show"), 2000);
   }
 
-  // ===== THEME / Assets =====
   function applyTheme() {
     const t = state.config.THEME || {};
     const root = document.documentElement;
@@ -86,7 +83,6 @@
     if (t.RADIUS != null) root.style.setProperty("--radius", t.RADIUS + "px");
     if (t.SPACING != null) root.style.setProperty("--space", t.SPACING + "px");
 
-    // Banner
     if (state.config.ASSET_HEADER_URL) {
       if (els.headerImg) {
         els.headerImg.src = state.config.ASSET_HEADER_URL;
@@ -101,7 +97,6 @@
       if (els.headerImgSide) els.headerImgSide.style.display = "none";
     }
 
-    // Ticket logo
     if (state.config.ASSET_LOGO_URL) {
       els.tktLogo.crossOrigin = "anonymous";
       els.tktLogo.referrerPolicy = "no-referrer";
@@ -112,7 +107,6 @@
     }
   }
 
-  // ===== Catálogo / Cards =====
   function buildControls(v, current) {
     const frag = document.createDocumentFragment();
     if (current === 0) {
@@ -140,7 +134,6 @@
     card.className = "card";
     card.dataset.id = v.IdVianda;
 
-    // IMG
     const imgBox = document.createElement("div");
     imgBox.className = "card-img";
     const img = document.createElement("img");
@@ -151,6 +144,7 @@
     const srcNorm = normalizeImageUrl(v.Imagen);
     const driveAlt = srcNorm && isGoogleDrive(srcNorm)
       ? srcNorm.replace("export=view", "export=download") : "";
+
     img.src = placeholder;
 
     if (srcNorm) {
@@ -164,14 +158,15 @@
           probe2.onload = () => { img.src = driveAlt; };
           probe2.onerror = () => { img.src = placeholder; };
           probe2.src = driveAlt;
-        } else { img.src = placeholder; }
+        } else {
+          img.src = placeholder;
+        }
       };
       probe.src = srcNorm;
     }
 
     imgBox.appendChild(img);
 
-    // BODY
     const body = document.createElement("div");
     body.className = "card-body";
 
@@ -230,7 +225,6 @@
     renderResumen();
   }
 
-  // Resumen
   function renderResumen() {
     els.resumenList.innerHTML = "";
     let total = 0;
