@@ -51,13 +51,6 @@
     if (els.statusSide) els.statusSide.textContent = msg;
   }
 
-  // ✅ Split robusto: si el formulario está habilitado y la media query matchea, aplico split.
-  function updateSplitMode() {
-    const enabled = !!state.config?.FORM_ENABLED;
-    const mq = window.matchMedia && window.matchMedia('(min-width: 960px) and (orientation: landscape)').matches;
-    document.body.classList.toggle('split', enabled && mq);
-  }
-
   // ===== Helpers imágenes (Drive + Blob) =====
   function normalizeImageUrl(u) {
     if (!u) return "";
@@ -76,10 +69,10 @@
     catch { return String(n); }
   }
 
-  function toast(msg) {
+  function toast(msg, hold=false) {
     els.toast.textContent = msg;
     els.toast.classList.add("show");
-    setTimeout(() => els.toast.classList.remove("show"), 2000);
+    if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2000);
   }
 
   // ===== THEME / Assets =====
@@ -95,14 +88,16 @@
 
     // Banner
     if (state.config.ASSET_HEADER_URL) {
-      els.headerImg.src = state.config.ASSET_HEADER_URL;
-      els.headerImg.style.display = "block";
+      if (els.headerImg) {
+        els.headerImg.src = state.config.ASSET_HEADER_URL;
+        els.headerImg.style.display = "block";
+      }
       if (els.headerImgSide) {
         els.headerImgSide.src = state.config.ASSET_HEADER_URL;
         els.headerImgSide.style.display = "block";
       }
     } else {
-      els.headerImg.style.display = "none";
+      if (els.headerImg) els.headerImg.style.display = "none";
       if (els.headerImgSide) els.headerImgSide.style.display = "none";
     }
 
@@ -117,7 +112,7 @@
     }
   }
 
-  // ===== Catálogo / Cards (tu UX: “+” se expande) =====
+  // ===== Catálogo / Cards =====
   function buildControls(v, current) {
     const frag = document.createDocumentFragment();
     if (current === 0) {
@@ -145,6 +140,7 @@
     card.className = "card";
     card.dataset.id = v.IdVianda;
 
+    // IMG
     const imgBox = document.createElement("div");
     imgBox.className = "card-img";
     const img = document.createElement("img");
@@ -152,12 +148,10 @@
 
     const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL ||
       (window.location.origin + "/assets/placeholder.png");
-
     const srcNorm = normalizeImageUrl(v.Imagen);
-    const driveAlt = srcNorm && isGoogleDrive(srcNorm) ? srcNorm.replace("export=view", "export=download") : "";
-
+    const driveAlt = srcNorm && isGoogleDrive(srcNorm)
+      ? srcNorm.replace("export=view", "export=download") : "";
     img.src = placeholder;
-
     if (srcNorm) {
       const probe = new Image();
       if (isGoogleDrive(srcNorm)) probe.referrerPolicy = "no-referrer";
@@ -169,46 +163,69 @@
           probe2.onload = () => { img.src = driveAlt; };
           probe2.onerror = () => { img.src = placeholder; };
           probe2.src = driveAlt;
-        } else img.src = placeholder;
+        } else { img.src = placeholder; }
       };
       probe.src = srcNorm;
     }
-
     imgBox.appendChild(img);
 
+    // BODY
     const body = document.createElement("div");
     body.className = "card-body";
-
     const title = document.createElement("h3");
-    title.className = "card-title";
-    title.textContent = v.Nombre;
-
+    title.className = "card-title"; title.textContent = v.Nombre;
     const desc = document.createElement("div");
-    desc.className = "card-desc";
-    desc.textContent = v.Descripcion || "";
+    desc.className = "card-desc"; desc.textContent = v.Descripcion || "";
 
     const bottom = document.createElement("div");
     bottom.className = "card-bottom";
-
     const price = document.createElement("div");
     price.className = "card-price";
     price.textContent = "$ " + fmtMoney(v.Precio);
 
+    const controlsBox = document.createElement("div");
     const current = state.cart.get(v.IdVianda)?.cantidad || 0;
-    const controls = document.createElement("div");
-    controls.appendChild(buildControls(v, current));
+    controlsBox.appendChild(buildControls(v, current));
 
-    bottom.append(price, controls);
+    bottom.append(price, controlsBox);
     body.append(title, desc, bottom);
     card.append(imgBox, body);
-
     return card;
   }
 
   function renderCatalogo() {
     els.catalogo.innerHTML = "";
-    if (!state.catalogo.length) return;
+    if (!state.catalogo.length) {
+      const empty = document.createElement("div");
+      empty.textContent = state.config.MSG_EMPTY || "No hay viandas disponibles por ahora.";
+      empty.className = "card";
+      els.catalogo.appendChild(empty);
+      return;
+    }
     for (const v of state.catalogo) els.catalogo.appendChild(buildCard(v));
+  }
+
+  function renderResumen() {
+    els.resumenList.innerHTML = "";
+    let total = 0;
+    const items = Array.from(state.cart.values());
+    items.forEach(it => total += (it.precio * it.cantidad));
+
+    items.slice(0, (state.config.UI_RESUMEN_ITEMS_VISIBLES || 4)).forEach(it => {
+      const row = document.createElement("div");
+      row.className = "resumen-item";
+      const left = document.createElement("div");
+      left.className = "resumen-left";
+      left.textContent = `${it.cantidad}× ${it.nombre}`;
+      const right = document.createElement("div");
+      right.className = "resumen-right";
+      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
+      row.append(left, right);
+      els.resumenList.appendChild(row);
+    });
+
+    els.resumenTotal.textContent = "$ " + fmtMoney(total);
+    els.btnConfirmar.disabled = total <= 0;
   }
 
   function patchCardControls(id, v, n) {
@@ -216,53 +233,20 @@
     if (!card) return;
     const bottom = card.querySelector(".card-bottom");
     if (!bottom) return;
-    const controlsHolder = bottom.lastElementChild;
-    if (!controlsHolder) return;
-    controlsHolder.innerHTML = "";
-    controlsHolder.appendChild(buildControls(v, n));
+    const newControls = buildControls(v, n);
+    const oldControls = bottom.lastElementChild;
+    if (oldControls) bottom.replaceChild(newControls, oldControls);
+    else bottom.appendChild(newControls);
   }
 
   function updateQty(v, n) {
     const max = Number(state.config.UI_MAX_QTY_POR_VIANDA || 9);
     if (n < 0) n = 0;
     if (n > max) { toast(state.config.MSG_LIMIT || "Máximo 9 por vianda."); n = max; }
-
     if (n === 0) state.cart.delete(v.IdVianda);
     else state.cart.set(v.IdVianda, { id: v.IdVianda, nombre: v.Nombre, precio: Number(v.Precio), cantidad: n });
-
     patchCardControls(v.IdVianda, v, n);
     renderResumen();
-  }
-
-  // ✅ “carrito vacío” para que la columna izquierda no quede muerta
-  function renderResumen() {
-    els.resumenList.innerHTML = "";
-    let total = 0;
-    const items = Array.from(state.cart.values());
-    items.forEach(it => total += (it.precio * it.cantidad));
-
-    if (!items.length) {
-      const empty = document.createElement("div");
-      empty.className = "resumen-empty";
-      empty.textContent = "Carrito vacío";
-      els.resumenList.appendChild(empty);
-    } else {
-      items.slice(0, (state.config.UI_RESUMEN_ITEMS_VISIBLES || 4)).forEach(it => {
-        const row = document.createElement("div");
-        row.className = "resumen-item";
-        const left = document.createElement("div");
-        left.className = "resumen-left";
-        left.textContent = `${it.cantidad}× ${it.nombre}`;
-        const right = document.createElement("div");
-        right.className = "resumen-right";
-        right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
-        row.append(left, right);
-        els.resumenList.appendChild(row);
-      });
-    }
-
-    els.resumenTotal.textContent = "$ " + fmtMoney(total);
-    els.btnConfirmar.disabled = total <= 0;
   }
 
   async function getIP() {
@@ -272,11 +256,11 @@
     } catch {}
   }
 
+  // ===== Config desde API =====
   async function loadConfig() {
     setStatus("Obteniendo configuración…");
     const res = await fetch(API + "?route=ui-config", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
     const conf = await res.json();
-
     state.config = {
       THEME: {
         PRIMARY: conf.THEME_PRIMARY,
@@ -301,22 +285,31 @@
       MSG_SUCCESS: conf.MSG_SUCCESS,
       PAY_ALIAS: conf.PAY_ALIAS || "",
       PAY_NOTE: conf.PAY_NOTE || "",
+      WA_NUMBER: conf.WA_NUMBER || "",
+      WA_MESSAGE: conf.WA_MESSAGE || "",
     };
 
     applyTheme();
 
     if (!state.config.FORM_ENABLED) {
-      document.body.classList.remove('split');
       els.app.classList.add("hidden");
       els.closed.classList.remove("hidden");
       els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
       els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp.";
+      if (state.config.WA_NUMBER) {
+        els.closedWA.classList.remove("hidden");
+        els.closedWA.onclick = () => {
+          const text = encodeURIComponent(state.config.WA_MESSAGE || "Hola! Quiero hacer un pedido.");
+          window.open(`https://wa.me/${state.config.WA_NUMBER}?text=${text}`, "_blank");
+        };
+      }
       setStatus("Formulario cerrado");
       return false;
     }
 
-    setStatus("Catálogo actualizado ✓");
-    updateSplitMode();
+    els.closed.classList.add("hidden");
+    els.app.classList.remove("hidden");
+    setStatus("Configuración cargada");
     return true;
   }
 
@@ -324,6 +317,7 @@
     setStatus("Cargando catálogo…");
     const res = await fetch(API + "?route=viandas", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
     const data = await res.json();
+    if (data.closed) { setStatus("Formulario cerrado"); return; }
     state.catalogo = Array.isArray(data.items) ? data.items : [];
     renderCatalogo();
     setStatus("Catálogo actualizado ✓");
@@ -332,7 +326,32 @@
   function openSheet() { els.sheet.classList.remove("hidden"); }
   function closeSheet() { els.sheet.classList.add("hidden"); }
 
-  // Ticket y envío: dejo tu flujo (no te lo cambio acá)
+  function openTicket(order) {
+    els.tktSub.textContent = "";
+    els.tktId.textContent = order.idPedido;
+    els.tktDate.textContent = order.fecha;
+    els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
+
+    els.tktItems.innerHTML = "";
+    order.items.forEach(it => {
+      const row = document.createElement("div");
+      row.className = "tkt-row";
+      const left = document.createElement("div");
+      left.className = "tkt-left";
+      left.textContent = `${it.cantidad}× ${it.nombre}`;
+      const right = document.createElement("div");
+      right.className = "tkt-right";
+      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
+      row.append(left, right);
+      els.tktItems.appendChild(row);
+    });
+
+    els.tktTotal.textContent = "$ " + fmtMoney(order.total);
+    els.tktNote.textContent = state.config.PAY_NOTE || "";
+
+    els.tkt.classList.remove("hidden");
+  }
+
   async function waitForHtml2Canvas() {
     const start = Date.now();
     while (!window.html2canvas) {
@@ -379,31 +398,8 @@
     return () => { restores.forEach(fn => fn()); };
   }
 
-  function openTicket(order) {
-    els.tktSub.textContent = "";
-    els.tktId.textContent = order.idPedido;
-    els.tktDate.textContent = order.fecha;
-    els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
-
-    els.tktItems.innerHTML = "";
-    order.items.forEach(it => {
-      const row = document.createElement("div");
-      row.className = "tkt-row";
-      const left = document.createElement("div");
-      left.className = "tkt-left";
-      left.textContent = `${it.cantidad}× ${it.nombre}`;
-      const right = document.createElement("div");
-      right.className = "tkt-right";
-      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
-      row.append(left, right);
-      els.tktItems.appendChild(row);
-    });
-
-    els.tktTotal.textContent = "$ " + fmtMoney(order.total);
-    els.tktNote.textContent = state.config.PAY_NOTE || "";
-
-    els.tkt.classList.remove("hidden");
-
+  async function showAndSaveTicket(order) {
+    openTicket(order);
     els.tktSave.onclick = async () => {
       els.tktSave.disabled = true;
       try {
@@ -460,7 +456,6 @@
       });
 
       const data = await res.json();
-
       if (!res.ok) {
         if (data && data.error === "FORM_CLOSED") toast("Pedidos cerrados.");
         else if (data && data.error === "AUTH_FAIL") toast(state.config.MSG_AUTH_FAIL || "Clave incorrecta.");
@@ -470,7 +465,6 @@
 
       const id = data.idPedido;
       let total = 0; cartItems.forEach(it => total += (it.precio * it.cantidad));
-
       const order = {
         idPedido: id,
         items: cartItems.map(x => ({ nombre: x.nombre, cantidad: x.cantidad, precio: x.precio })),
@@ -479,12 +473,11 @@
       };
 
       closeSheet();
-      openTicket(order);
+      await showAndSaveTicket(order);
 
       state.cart.clear();
       renderCatalogo();
       renderResumen();
-
     } catch {
       toast(state.config.MSG_SERVER_FAIL || "No pudimos completar el pedido.");
     } finally {
@@ -503,11 +496,6 @@
     await getIP();
     const ok = await loadConfig();
     if (!ok) return;
-
-    updateSplitMode();
-    window.addEventListener('resize', updateSplitMode);
-    window.addEventListener('orientationchange', updateSplitMode);
-
     await loadCatalogo();
     renderResumen();
   })();
