@@ -30,7 +30,9 @@
     <section id="resumen">
       <!-- SOLO desktop: header dentro de la columna izquierda (no afecta mobile) -->
       <div class="sidehdr" aria-hidden="true">
-        <img id="header-img-side" alt="Encabezado Amaranta" />
+        <div class="sidehdr-img">
+          <img id="header-img-side" alt="Encabezado Amaranta" />
+        </div>
         <div class="wrap mini">
           <div id="conn-status-side">—</div>
         </div>
@@ -54,7 +56,7 @@
       <div class="row">
         <div class="field" style="flex:1">
           <label for="dni">DNI</label>
-          <input id="dni" inputmode="numeric" pattern="\d{8}" maxlength="8" placeholder="12345678" />
+          <input id="dni" inputmode="numeric" pattern="\\d{8}" maxlength="8" placeholder="12345678" />
         </div>
         <div class="field" style="flex:1">
           <label for="clave">Clave</label>
@@ -97,7 +99,8 @@
       </div>
 
       <div class="ticket-actions">
-        <button id="tkt-save" class="btn primary">Guardar…</button>
+        <button id="tkt-close" class="btn cancel">Cerrar</button>
+        <button id="tkt-save" class="btn primary">Guardar imagen</button>
       </div>
     </div>
   </div>
@@ -106,7 +109,6 @@
 
   <!-- Config y app -->
   <script src="/config.js"></script>
-  <!-- html2canvas para exportar imagen del ticket -->
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" async></script>
   <script src="/app.js"></script>
 </body>
