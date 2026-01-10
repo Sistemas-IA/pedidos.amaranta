@@ -10,26 +10,52 @@ const sheets = google.sheets({ version: 'v4', auth });
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'https://pedidos.amaranta.ar';
+const REQUIRED_API_KEY = process.env.API_KEY || '';
 
 const SHEET_VIANDAS   = 'Viandas';
 const SHEET_CLIENTES  = 'Clientes';
 const SHEET_PEDIDOS   = 'Pedidos';
 const SHEET_CONFIG    = 'Configuracion';
 
+// Upstash (ya lo usás para IDs)
+const UP_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/,'');
+const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+
+// ---------- Utils CORS/Res ----------
 function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
 }
+function ok(res, data) { setCors(res); return res.status(200).json({ ok: true, ...data }); }
+function err(res, code, error, extra={}) { setCors(res); return res.status(code).json({ ok: false, error, ...extra }); }
 
-function ok(res, data) {
-  setCors(res);
-  res.status(200).json(data);
+function requireKey(req, res){
+  if (!REQUIRED_API_KEY) return true;
+  const k = String(req.headers['x-api-key'] || '');
+  if (k && k === REQUIRED_API_KEY) return true;
+  err(res, 401, 'UNAUTHORIZED');
+  return false;
 }
 
-function bad(res, status, data) {
-  setCors(res);
-  res.status(status).json(data);
+// ---------- Helpers Config desde hoja ----------
+async function readConfigKV() {
+  try {
+    const r = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_CONFIG}!A:B`
+    });
+    const rows = r.data.values || [];
+    const kv = {};
+    for (let i = 0; i < rows.length; i++) {
+      const k = rows[i][0], v = rows[i][1];
+      if (!k) continue;
+      kv[String(k).trim()] = v;
+    }
+    return kv;
+  } catch {
+    return {};
+  }
 }
 
 // ---------- Normalización mínima de imagen ----------
@@ -43,190 +69,361 @@ function normalizeImage(u) {
   return u;
 }
 
-// ---------- Helpers ----------
-function nowISO() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+// ---------- Upstash helpers ----------
+const hasUpstash = () => !!(UP_URL && UP_TOKEN);
+
+function upPath(cmd, ...parts){
+  return `${UP_URL}/${cmd}/${parts.map(p => encodeURIComponent(String(p))).join('/')}`;
+}
+async function upCall(cmd, ...parts){
+  const r = await fetch(upPath(cmd, ...parts), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${UP_TOKEN}` }
+  });
+  const j = await r.json().catch(() => ({}));
+  return j.result;
+}
+async function upGet(key){ return upCall('get', key); }
+async function upIncr(key){ return upCall('incr', key); }
+async function upExpire(key, sec){ return upCall('expire', key, sec); }
+async function upSetEx(key, sec, value){ return upCall('setex', key, sec, value); }
+async function upDel(key){ return upCall('del', key); }
+async function upTtl(key){ return upCall('ttl', key); }
+
+// ---------- Rate limit ----------
+const RL_DNI_FAILS = 5;
+const RL_DNI_WINDOW_SEC = 10 * 60;  // 10 min
+const RL_DNI_BLOCK_SEC  = 15 * 60;  // 15 min
+
+const RL_IP_FAILS = 25;
+const RL_IP_WINDOW_SEC = 10 * 60;
+const RL_IP_BLOCK_SEC  = 15 * 60;
+
+function rlKeys(dni, ip){
+  return {
+    dniFail: `rl:ped:fail:dni:${dni}`,
+    dniBlock: `rl:ped:block:dni:${dni}`,
+    ipFail: `rl:ped:fail:ip:${ip}`,
+    ipBlock: `rl:ped:block:ip:${ip}`,
+  };
 }
 
-function sanitize(s, max) {
-  s = String(s ?? '').trim();
-  if (s.length > max) s = s.slice(0, max);
+async function checkBlocked(dni, ip){
+  if (!hasUpstash()) return { blocked:false };
+
+  const k = rlKeys(dni, ip);
+
+  const [bDni, bIp] = await Promise.all([ upGet(k.dniBlock), ip ? upGet(k.ipBlock) : null ]);
+
+  if (bDni != null) {
+    let ttl = await upTtl(k.dniBlock);
+    ttl = Number(ttl);
+    if (!Number.isFinite(ttl) || ttl < 1) ttl = RL_DNI_BLOCK_SEC;
+    return { blocked:true, retryAfterSeconds: ttl, scope:'dni' };
+  }
+
+  if (ip && bIp != null) {
+    let ttl = await upTtl(k.ipBlock);
+    ttl = Number(ttl);
+    if (!Number.isFinite(ttl) || ttl < 1) ttl = RL_IP_BLOCK_SEC;
+    return { blocked:true, retryAfterSeconds: ttl, scope:'ip' };
+  }
+
+  return { blocked:false };
+}
+
+async function registerFail(dni, ip){
+  if (!hasUpstash()) return;
+
+  const k = rlKeys(dni, ip);
+
+  // DNI
+  const n = Number(await upIncr(k.dniFail));
+  await upExpire(k.dniFail, RL_DNI_WINDOW_SEC);
+  if (n >= RL_DNI_FAILS) {
+    await upSetEx(k.dniBlock, RL_DNI_BLOCK_SEC, '1');
+    await upDel(k.dniFail);
+  }
+
+  // IP
+  if (ip) {
+    const m = Number(await upIncr(k.ipFail));
+    await upExpire(k.ipFail, RL_IP_WINDOW_SEC);
+    if (m >= RL_IP_FAILS) {
+      await upSetEx(k.ipBlock, RL_IP_BLOCK_SEC, '1');
+      await upDel(k.ipFail);
+    }
+  }
+}
+
+async function clearFails(dni, ip){
+  if (!hasUpstash()) return;
+  const k = rlKeys(dni, ip);
+  await Promise.all([ upDel(k.dniFail), ip ? upDel(k.ipFail) : Promise.resolve() ]);
+}
+
+// ---------- Helpers ID de pedido ----------
+async function getNextIdPedido() {
+  if (hasUpstash()) {
+    const n = Number(await upCall('incr', 'id:pedidos:last'));
+    return n < 10001 ? 10001 : n;
+  }
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_PEDIDOS}!A:A`
+  });
+  const rows = resp.data.values?.length || 1;
+  if (rows <= 1) return 10001;
+  const lastId = Number(resp.data.values[rows - 1][0]) || 10000;
+  return lastId + 1;
+}
+
+// ---------- Normalización headers / valores ----------
+function normStr(s){
+  return String(s ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+}
+
+function findHeaderIndex(headers, candidates){
+  const H = (headers || []).map(h => normStr(h));
+  const C = candidates.map(c => normStr(c));
+
+  // exact
+  for (const cand of C) {
+    const i = H.indexOf(cand);
+    if (i >= 0) return i;
+  }
+  // contains
+  for (let i=0;i<H.length;i++){
+    for (const cand of C){
+      if (cand && H[i].includes(cand)) return i;
+    }
+  }
+  return -1;
+}
+
+function normDni(v){
+  const s = String(v ?? '').replace(/\D/g,'').trim();
   return s;
 }
 
-async function getKV() {
-  const r = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_CONFIG}!A:B`
-  });
-  const values = r.data.values || [];
-  const kv = {};
-  for (let i = 1; i < values.length; i++) {
-    const [k,v] = values[i];
-    if (!k) continue;
-    kv[String(k).trim()] = (v ?? '').toString();
-  }
-  return kv;
+function isValidado(v){
+  const s = normStr(v);
+  if (!s) return false;
+  if (s.startsWith('valid')) return true; // validado/valido/validación
+  if (['ok','si','sí','true','1','aprobado','activo'].includes(s)) return true;
+  return false;
 }
 
-async function getClienteByDni(dni) {
-  const r = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_CLIENTES}!A:Z`
-  });
-  const values = r.data.values || [];
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i];
-    const rowDni = String(row[1] ?? '').trim();
-    if (rowDni === dni) {
-      return {
-        Nombre: row[0] ?? '',
-        DNI: row[1] ?? '',
-        Email: row[2] ?? '',
-        Telefono: row[3] ?? '',
-        Clave: row[4] ?? ''
-      };
-    }
-  }
-  return null;
-}
-
-async function appendPedido(pedidoRow) {
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_PEDIDOS}!A:Z`,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: [pedidoRow] }
-  });
-}
-
+// ---------- Handler ----------
 export default async function handler(req, res) {
-  setCors(res);
-  if (req.method === 'OPTIONS') return res.status(204).end();
-
-  try {
-    const url = new URL(req.url, `https://${req.headers.host}`);
-    const route = url.searchParams.get('route') || '';
-
-    // -------- GET ui-config --------
-    if (req.method === 'GET' && route === 'ui-config') {
-      const kv = await getKV();
-      return ok(res, {
-        FORM_ENABLED: kv.FORM_ENABLED ?? 'true',
-        FORM_CLOSED_TITLE: kv.FORM_CLOSED_TITLE ?? 'Pedidos cerrados',
-        FORM_CLOSED_MESSAGE: kv.FORM_CLOSED_MESSAGE ?? 'Volvé más tarde.',
-        UI_RESUMEN_ITEMS_VISIBLES: kv.UI_RESUMEN_ITEMS_VISIBLES ?? '4',
-        UI_MAX_QTY_POR_VIANDA: kv.UI_MAX_QTY_POR_VIANDA ?? '9',
-        MSG_EMPTY: kv.MSG_EMPTY ?? '',
-        MSG_AUTH_FAIL: kv.MSG_AUTH_FAIL ?? '',
-        MSG_LIMIT: kv.MSG_LIMIT ?? '',
-        MSG_SERVER_FAIL: kv.MSG_SERVER_FAIL ?? '',
-        MSG_SUCCESS: kv.MSG_SUCCESS ?? '',
-        THEME_PRIMARY: kv.THEME_PRIMARY ?? '',
-        THEME_SECONDARY: kv.THEME_SECONDARY ?? '',
-        THEME_BG: kv.THEME_BG ?? '',
-        THEME_TEXT: kv.THEME_TEXT ?? '',
-        RADIUS: kv.RADIUS ?? '',
-        SPACING: kv.SPACING ?? '',
-        ASSET_HEADER_URL: kv.ASSET_HEADER_URL ?? '',
-        ASSET_LOGO_URL: kv.ASSET_LOGO_URL ?? '',
-        ASSET_PLACEHOLDER_IMG_URL: kv.ASSET_PLACEHOLDER_IMG_URL ?? '',
-        WA_NUMBER: kv.WA_NUMBER ?? '',
-        WA_MESSAGE: kv.WA_MESSAGE ?? '',
-        WA_PHONE_TARGET: kv.WA_PHONE_TARGET ?? '',
-        PAY_ALIAS: kv.PAY_ALIAS ?? '',
-        PAY_NOTE: kv.PAY_NOTE ?? '',
-      });
-    }
-
-    // -------- GET viandas --------
-    if (req.method === 'GET' && route === 'viandas') {
-      const r = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_VIANDAS}!A:G`
-      });
-      const values = r.data.values || [];
-      const items = [];
-      for (let i = 1; i < values.length; i++) {
-        const row = values[i];
-        const disponible = String(row[5]).toLowerCase() === 'true';
-        if (!disponible) continue;
-        items.push({
-          IdVianda: row[0],
-          Nombre: row[1],
-          Descripcion: row[2],
-          Precio: Number(row[3]) | 0,
-          Imagen: normalizeImage(row[4]),
-          Orden: row[6] ?? ''
-        });
-      }
-
-      // Ordenamos por columna G (Orden) si viene cargada.
-      const toNum = (v) => {
-        const s = String(v ?? '').trim().replace(',', '.');
-        if (!s) return null;
-        const n = Number(s);
-        return Number.isFinite(n) ? n : null;
-      };
-      items.sort((a,b) => {
-        const ao = toNum(a.Orden);
-        const bo = toNum(b.Orden);
-        if (ao != null && bo != null && ao !== bo) return ao - bo;
-        if (ao != null && bo == null) return -1;
-        if (ao == null && bo != null) return 1;
-        return String(a.Nombre || '').localeCompare(String(b.Nombre || ''), 'es', { sensitivity: 'base' });
-      });
-
-      return ok(res, { items });
-    }
-
-    // -------- POST pedido --------
-    if (req.method === 'POST' && route === 'pedido') {
-      const MAX_COMENT = 400, MAX_IP = 128, MAX_UA = 256;
-
-      const body = req.body || {};
-      const dni = String(body.dni || '').trim();
-      const clave = String(body.clave || '').trim();
-      const comentarios = sanitize(body.comentarios || '', MAX_COMENT);
-      const ip = sanitize(body.ip || '', MAX_IP);
-      const ua = sanitize(body.ua || '', MAX_UA);
-      const items = Array.isArray(body.items) ? body.items : [];
-
-      const kv = await getKV();
-      const enabled = String(kv.FORM_ENABLED ?? 'true').toLowerCase() === 'true';
-      if (!enabled) return bad(res, 403, { error: 'FORM_CLOSED' });
-
-      if (!/^\d{8}$/.test(dni) || dni.startsWith('0')) return bad(res, 400, { error: 'BAD_DNI' });
-      if (!clave) return bad(res, 400, { error: 'BAD_CLAVE' });
-      if (!items.length) return bad(res, 400, { error: 'EMPTY' });
-
-      const cliente = await getClienteByDni(dni);
-      if (!cliente) return bad(res, 401, { error: 'AUTH_FAIL' });
-      if (String(cliente.Clave || '').trim() !== clave) return bad(res, 401, { error: 'AUTH_FAIL' });
-
-      const idPedido = `${Date.now()}-${Math.random().toString(16).slice(2,8)}`;
-      const fecha = nowISO();
-
-      // Guardamos en la hoja Pedidos (simple)
-      await appendPedido([
-        fecha,
-        idPedido,
-        cliente.Nombre || '',
-        dni,
-        comentarios,
-        ip,
-        ua,
-        JSON.stringify(items)
-      ]);
-
-      return ok(res, { idPedido });
-    }
-
-    return bad(res, 404, { error: 'NOT_FOUND' });
-  } catch (e) {
-    return bad(res, 500, { error: 'SERVER', message: String(e?.message || e) });
+  if (req.method === 'OPTIONS') {
+    setCors(res);
+    return res.status(200).end();
   }
+
+  if (!requireKey(req, res)) return;
+
+  const route = String(req.query.route || '').toLowerCase();
+
+  // -------- GET ui-config --------
+  if (req.method === 'GET' && route === 'ui-config') {
+    const kv = await readConfigKV();
+    return ok(res, {
+      FORM_ENABLED: String(kv.FORM_ENABLED ?? 'true'),
+      FORM_CLOSED_TITLE: kv.FORM_CLOSED_TITLE ?? 'Pedidos temporalmente cerrados',
+      FORM_CLOSED_MESSAGE: kv.FORM_CLOSED_MESSAGE ?? 'Estamos atendiendo por WhatsApp. Volvé más tarde o escribinos.',
+
+      THEME_PRIMARY: kv.THEME_PRIMARY ?? '',
+      THEME_SECONDARY: kv.THEME_SECONDARY ?? '',
+      THEME_BG: kv.THEME_BG ?? '',
+      THEME_TEXT: kv.THEME_TEXT ?? '',
+      RADIUS: kv.RADIUS ?? '16',
+      SPACING: kv.SPACING ?? '8',
+
+      ASSET_HEADER_URL: normalizeImage(kv.ASSET_HEADER_URL ?? ''),
+      ASSET_PLACEHOLDER_IMG_URL: normalizeImage(kv.ASSET_PLACEHOLDER_IMG_URL ?? ''),
+      ASSET_LOGO_URL: normalizeImage(kv.ASSET_LOGO_URL ?? ''),
+
+      UI_MAX_QTY_POR_VIANDA: kv.UI_MAX_QTY_POR_VIANDA ?? '9',
+      UI_RESUMEN_ITEMS_VISIBLES: kv.UI_RESUMEN_ITEMS_VISIBLES ?? '4',
+
+      MSG_EMPTY: kv.MSG_EMPTY ?? 'No hay viandas disponibles por ahora.',
+      MSG_AUTH_FAIL: kv.MSG_AUTH_FAIL ?? 'DNI o clave incorrectos o cliente no validado.',
+      MSG_LIMIT: kv.MSG_LIMIT ?? 'Máximo 9 por vianda.',
+      MSG_SERVER_FAIL: kv.MSG_SERVER_FAIL ?? 'No pudimos completar el pedido. Probá más tarde.',
+      MSG_SUCCESS: kv.MSG_SUCCESS ?? '¡Listo! Tu pedido es #{IDPEDIDO} por ${TOTAL}.',
+
+      WA_ENABLED: String(kv.WA_ENABLED ?? 'true'),
+      WA_TEMPLATE: kv.WA_TEMPLATE ?? '',
+      WA_ITEMS_BULLET: kv.WA_ITEMS_BULLET ?? '',
+      WA_PHONE_TARGET: kv.WA_PHONE_TARGET ?? '',
+
+      PAY_ALIAS: kv.PAY_ALIAS ?? '',
+      PAY_NOTE: kv.PAY_NOTE ?? '',
+    });
+  }
+
+  // -------- GET viandas --------
+  if (req.method === 'GET' && route === 'viandas') {
+    const r = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_VIANDAS}!A:G`
+    });
+    const values = r.data.values || [];
+    const items = [];
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const disponible = String(row[5]).toLowerCase() === 'true';
+      if (!disponible) continue;
+
+      items.push({
+        IdVianda: row[0],
+        Nombre: row[1],
+        Descripcion: row[2],
+        Precio: Number(row[3]) | 0,
+        Imagen: normalizeImage(row[4]),
+        Orden: row[6] ?? ''
+      });
+    }
+
+    const toNum = (v) => {
+      const s = String(v ?? '').trim().replace(',', '.');
+      if (!s) return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    };
+    items.sort((a,b) => {
+      const ao = toNum(a.Orden);
+      const bo = toNum(b.Orden);
+      if (ao != null && bo != null && ao !== bo) return ao - bo;
+      if (ao != null && bo == null) return -1;
+      if (ao == null && bo != null) return 1;
+      return String(a.Nombre || '').localeCompare(String(b.Nombre || ''), 'es', { sensitivity: 'base' });
+    });
+
+    return ok(res, { items });
+  }
+
+  // -------- POST pedido --------
+  if (req.method === 'POST' && route === 'pedido') {
+    const MAX_COMENT = 400, MAX_IP = 128, MAX_UA = 256;
+
+    const body = req.body || {};
+    const dni = normDni(body.dni);
+    const clave = String(body.clave || '').trim();
+
+    const ipHeader = (req.headers['x-forwarded-for'] ?? '').toString().split(',')[0] || req.socket?.remoteAddress || '';
+    const ip = normStr(body.ip || ipHeader || '').slice(0, MAX_IP);
+    const ua = (body.ua || req.headers['user-agent'] || '').toString().slice(0, MAX_UA);
+
+    let comentarios = (body.comentarios ?? '').toString();
+    comentarios = comentarios.replace(/\s+/g, ' ').trim().slice(0, MAX_COMENT);
+
+    const items = Array.isArray(body.items) ? body.items : [];
+
+    if (!/^\d{8}$/.test(dni) || dni.startsWith('0') || !clave || !items.length) {
+      return err(res, 400, 'BAD_REQUEST');
+    }
+
+    // Rate limit (bloqueo)
+    const blk = await checkBlocked(dni, ip);
+    if (blk.blocked) {
+      return err(res, 429, 'RATE_LIMIT', { retryAfterSeconds: blk.retryAfterSeconds, scope: blk.scope });
+    }
+
+    // Validar cliente (robusto por encabezados)
+    const rc = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_CLIENTES}!A:Z`
+    });
+
+    const valuesC = rc.data.values || [];
+    const headers = valuesC[0] || [];
+    const rowsC = valuesC.slice(1);
+
+    const iDNI = findHeaderIndex(headers, ['DNI', 'Documento']);
+    const iClave = findHeaderIndex(headers, ['Clave', 'Password', 'Pass']);
+    const iEstado = findHeaderIndex(headers, ['Estado', 'Validacion', 'Validación', 'EstadoCliente', 'Cliente']);
+
+    if (iDNI < 0 || iClave < 0) {
+      // configuración mal armada de la hoja => no exponemos detalles
+      return err(res, 500, 'CONFIG_ERROR');
+    }
+
+    const match = rowsC.find(r => normDni(r[iDNI]) === dni);
+
+    const claveSheet = match ? String(match[iClave] ?? '').trim() : '';
+    const estadoSheet = match && iEstado >= 0 ? String(match[iEstado] ?? '') : '';
+
+    const requiereValidado = (iEstado >= 0); // si existe columna Estado, la respetamos
+
+    const okEstado = !requiereValidado || isValidado(estadoSheet);
+
+    if (!match || claveSheet !== clave || !okEstado) {
+      await registerFail(dni, ip);
+      return err(res, 401, 'AUTH_FAIL');
+    }
+
+    await clearFails(dni, ip);
+
+    // catálogo para precios
+    const rv = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_VIANDAS}!A:D`
+    });
+    const rowsV = rv.data.values?.slice(1) || [];
+    const map = new Map();
+    for (const row of rowsV) {
+      if (!row || row.length < 4) continue;
+      const id = String(row[0]);
+      map.set(id, { nombre: row[1], precio: Number(row[3]) | 0 });
+    }
+
+    const idPedido = await getNextIdPedido();
+
+    let total = 0;
+    const toAppend = [];
+    for (const it of items) {
+      const id = String(it.idVianda || '');
+      let qty = parseInt(it.cantidad || 0, 10);
+      if (!id || !qty) continue;
+      if (qty < 0) qty = 0;
+      if (qty > 9) qty = 9;
+      const v = map.get(id);
+      if (!v) continue;
+
+      const subtotal = v.precio * qty;
+      total += subtotal;
+
+      toAppend.push([
+        idPedido,                 // A IdPedido
+        String(dni),              // B DNI
+        v.nombre,                 // C Vianda (Nombre)
+        qty,                      // D Cantidad
+        comentarios,              // E Comentarios
+        subtotal,                 // F Subtotal
+        new Date().toISOString(), // G Timestamp
+        ip,                       // H IP
+        ua                        // I UserAgent
+      ]);
+    }
+
+    if (!toAppend.length) return err(res, 400, 'NO_ITEMS');
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_PEDIDOS}!A:I`,
+      valueInputOption: 'RAW',
+      requestBody: { values: toAppend }
+    });
+
+    return ok(res, { idPedido, total });
+  }
+
+  return err(res, 404, 'ROUTE_NOT_FOUND');
 }
