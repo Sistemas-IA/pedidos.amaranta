@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Pedidos Amaranta</title>
   <link rel="icon" href="/assets/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css" />
+  <!-- cache buster para que NO te agarre CSS viejo -->
+  <link rel="stylesheet" href="/styles.css?v=20260110_1" />
 </head>
 <body>
-  <!-- Banner configurable desde Configuracion.ASSET_HEADER_URL -->
+  <!-- Banner (mobile/normal) -->
   <header class="hdr">
     <img id="header-img" alt="Encabezado Amaranta" />
     <div class="wrap mini">
@@ -16,19 +17,19 @@
     </div>
   </header>
 
-  <!-- Bloque visible cuando el formulario está CERRADO -->
+  <!-- Bloque “cerrado” -->
   <main id="closed" class="hidden">
     <h2 id="closed-title">Pedidos temporalmente cerrados</h2>
     <p id="closed-msg">Estamos atendiendo por WhatsApp. Volvé más tarde o escribinos.</p>
     <button id="closed-wa" class="hidden btn primary">Escribir por WhatsApp</button>
   </main>
 
-  <!-- App visible cuando el formulario está ABIERTO -->
+  <!-- App -->
   <main id="app">
     <section class="grid" id="catalogo"></section>
 
     <section id="resumen">
-      <!-- Solo desktop apaisado: header dentro de la columna izquierda (NO afecta mobile) -->
+      <!-- SOLO desktop apaisado: header dentro de la columna izquierda -->
       <div class="sidehdr" aria-hidden="true">
         <img id="header-img-side" alt="Encabezado Amaranta" />
         <div class="wrap mini side-mini">
@@ -37,6 +38,7 @@
       </div>
 
       <div id="resumen-list"></div>
+
       <div class="bar">
         <div class="total-label"><strong>Total</strong></div>
         <div id="resumen-total" class="total-money">$ 0</div>
@@ -45,7 +47,7 @@
     </section>
   </main>
 
-  <!-- Sheet de autenticación y envío -->
+  <!-- Sheet Auth -->
   <div id="auth-sheet" class="hidden" aria-modal="true" role="dialog">
     <div class="sheet">
       <h3>Datos del cliente</h3>
@@ -70,7 +72,7 @@
     </div>
   </div>
 
-  <!-- Modal Ticket / Comprobante -->
+  <!-- Ticket -->
   <div id="ticket" class="hidden" aria-modal="true" role="dialog">
     <div class="ticket">
       <div id="ticket-content">
@@ -102,10 +104,8 @@
 
   <div id="toast"></div>
 
-  <!-- Config y app -->
-  <script src="/config.js"></script>
-  <!-- html2canvas para exportar imagen del ticket -->
+  <script src="/config.js?v=20260110_1"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" async></script>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20260110_1"></script>
 </body>
 </html>
