@@ -255,9 +255,10 @@ textarea{ min-height:70px }
   }
   #catalogo.grid{
     grid-template-columns: repeat(2, 1fr);
+    grid-auto-rows:auto;
   }
 
-  /* Izquierda: 50% header + 50% resumen (con scroll) */
+  /* Izquierda: 50% header + resto resumen */
   #resumen{
     grid-column:1;
     position:relative;
@@ -298,5 +299,10 @@ textarea{ min-height:70px }
     border-top:1px solid #eee;
     background:#fff;
     flex:0 0 auto;
+  }
+
+  /* ✅ FIX CLAVE: en pantallas MUY anchas, la foto deja de crecer infinito */
+  .card{
+    grid-template-columns: clamp(210px, 35%, 280px) 1fr;
   }
 }
