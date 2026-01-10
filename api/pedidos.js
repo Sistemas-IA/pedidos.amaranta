@@ -16,53 +16,20 @@ const SHEET_CLIENTES  = 'Clientes';
 const SHEET_PEDIDOS   = 'Pedidos';
 const SHEET_CONFIG    = 'Configuracion';
 
-// ---------- Utils CORS/Res ----------
 function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
 }
-function ok(res, data) { setCors(res); return res.status(200).json({ ok: true, ...data }); }
-function err(res, code, msg) { setCors(res); return res.status(code).json({ ok: false, error: msg }); }
 
-function asBool(v, def = true) {
-  if (v === undefined || v === null) return def;
-  return String(v).trim().toLowerCase() === 'true';
+function ok(res, data) {
+  setCors(res);
+  res.status(200).json(data);
 }
 
-function clampInt(n, min, max, def) {
-  const x = parseInt(n, 10);
-  if (!Number.isFinite(x)) return def;
-  if (x < min) return min;
-  if (x > max) return max;
-  return x;
-}
-
-// Evita que Sheets interprete fórmulas si el texto arranca con = + - @
-function sanitizeForSheet(text) {
-  const s = String(text ?? '').replace(/\s+/g, ' ').trim();
-  if (!s) return '';
-  return /^[=+\-@]/.test(s) ? `'${s}` : s;
-}
-
-// ---------- Helpers Config desde hoja ----------
-async function readConfigKV() {
-  try {
-    const r = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_CONFIG}!A:B`
-    });
-    const rows = r.data.values || [];
-    const kv = {};
-    for (let i = 0; i < rows.length; i++) {
-      const k = rows[i][0], v = rows[i][1];
-      if (!k) continue;
-      kv[String(k).trim()] = v;
-    }
-    return kv;
-  } catch {
-    return {};
-  }
+function bad(res, status, data) {
+  setCors(res);
+  res.status(status).json(data);
 }
 
 // ---------- Normalización mínima de imagen ----------
@@ -76,79 +43,100 @@ function normalizeImage(u) {
   return u;
 }
 
-// ---------- Helpers ID de pedido ----------
-async function getNextIdPedido() {
-  const urlBase = process.env.UPSTASH_REDIS_REST_URL;
-  const token   = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (urlBase && token) {
-    const url = urlBase.replace(/\/+$/,'') + '/incr/id:pedidos:last';
-    const r = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-    const j = await r.json().catch(() => ({}));
-    const n = Number(j.result || 0);
-    return n < 10001 ? 10001 : n;
-  }
-  const resp = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_PEDIDOS}!A:A`
-  });
-  const rows = resp.data.values?.length || 1;
-  if (rows <= 1) return 10001;
-  const lastId = Number(resp.data.values[rows - 1][0]) || 10000;
-  return lastId + 1;
+// ---------- Helpers ----------
+function nowISO() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-// ---------- Handler ----------
-export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') {
-    setCors(res);
-    return res.status(200).end();
+function sanitize(s, max) {
+  s = String(s ?? '').trim();
+  if (s.length > max) s = s.slice(0, max);
+  return s;
+}
+
+async function getKV() {
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_CONFIG}!A:B`
+  });
+  const values = r.data.values || [];
+  const kv = {};
+  for (let i = 1; i < values.length; i++) {
+    const [k,v] = values[i];
+    if (!k) continue;
+    kv[String(k).trim()] = (v ?? '').toString();
   }
+  return kv;
+}
+
+async function getClienteByDni(dni) {
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_CLIENTES}!A:Z`
+  });
+  const values = r.data.values || [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const rowDni = String(row[1] ?? '').trim();
+    if (rowDni === dni) {
+      return {
+        Nombre: row[0] ?? '',
+        DNI: row[1] ?? '',
+        Email: row[2] ?? '',
+        Telefono: row[3] ?? '',
+        Clave: row[4] ?? ''
+      };
+    }
+  }
+  return null;
+}
+
+async function appendPedido(pedidoRow) {
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_PEDIDOS}!A:Z`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [pedidoRow] }
+  });
+}
+
+export default async function handler(req, res) {
+  setCors(res);
+  if (req.method === 'OPTIONS') return res.status(204).end();
 
   try {
-    if (!SPREADSHEET_ID) return err(res, 500, 'SERVER_MISCONFIG');
-
-    const route = String(req.query.route || '').toLowerCase();
+    const url = new URL(req.url, `https://${req.headers.host}`);
+    const route = url.searchParams.get('route') || '';
 
     // -------- GET ui-config --------
     if (req.method === 'GET' && route === 'ui-config') {
-      const kv = await readConfigKV();
+      const kv = await getKV();
       return ok(res, {
-        // operativo
-        FORM_ENABLED: String(kv.FORM_ENABLED ?? 'true'),
-        FORM_CLOSED_TITLE: kv.FORM_CLOSED_TITLE ?? 'Pedidos temporalmente cerrados',
-        FORM_CLOSED_MESSAGE: kv.FORM_CLOSED_MESSAGE ?? 'Estamos atendiendo por WhatsApp. Volvé más tarde o escribinos.',
-
-        // UI / theme
+        FORM_ENABLED: kv.FORM_ENABLED ?? 'true',
+        FORM_CLOSED_TITLE: kv.FORM_CLOSED_TITLE ?? 'Pedidos cerrados',
+        FORM_CLOSED_MESSAGE: kv.FORM_CLOSED_MESSAGE ?? 'Volvé más tarde.',
+        UI_RESUMEN_ITEMS_VISIBLES: kv.UI_RESUMEN_ITEMS_VISIBLES ?? '4',
+        UI_MAX_QTY_POR_VIANDA: kv.UI_MAX_QTY_POR_VIANDA ?? '9',
+        MSG_EMPTY: kv.MSG_EMPTY ?? '',
+        MSG_AUTH_FAIL: kv.MSG_AUTH_FAIL ?? '',
+        MSG_LIMIT: kv.MSG_LIMIT ?? '',
+        MSG_SERVER_FAIL: kv.MSG_SERVER_FAIL ?? '',
+        MSG_SUCCESS: kv.MSG_SUCCESS ?? '',
         THEME_PRIMARY: kv.THEME_PRIMARY ?? '',
         THEME_SECONDARY: kv.THEME_SECONDARY ?? '',
         THEME_BG: kv.THEME_BG ?? '',
         THEME_TEXT: kv.THEME_TEXT ?? '',
-        RADIUS: kv.RADIUS ?? '16',
-        SPACING: kv.SPACING ?? '8',
-
-        // assets
-        ASSET_HEADER_URL: normalizeImage(kv.ASSET_HEADER_URL ?? ''),
-        ASSET_PLACEHOLDER_IMG_URL: normalizeImage(kv.ASSET_PLACEHOLDER_IMG_URL ?? ''),
-        ASSET_LOGO_URL: normalizeImage(kv.ASSET_LOGO_URL ?? ''),
-
-        // límites / UI
-        UI_MAX_QTY_POR_VIANDA: kv.UI_MAX_QTY_POR_VIANDA ?? '9',
-        UI_RESUMEN_ITEMS_VISIBLES: kv.UI_RESUMEN_ITEMS_VISIBLES ?? '4',
-
-        // mensajes
-        MSG_EMPTY: kv.MSG_EMPTY ?? 'No hay viandas disponibles por ahora.',
-        MSG_AUTH_FAIL: kv.MSG_AUTH_FAIL ?? 'DNI o clave incorrectos o cliente no validado.',
-        MSG_LIMIT: kv.MSG_LIMIT ?? 'Máximo 9 por vianda.',
-        MSG_SERVER_FAIL: kv.MSG_SERVER_FAIL ?? 'No pudimos completar el pedido. Probá más tarde.',
-        MSG_SUCCESS: kv.MSG_SUCCESS ?? '¡Listo! Tu pedido es #{IDPEDIDO} por ${TOTAL}.',
-
-        // WhatsApp opcional
-        WA_ENABLED: String(kv.WA_ENABLED ?? 'true'),
-        WA_TEMPLATE: kv.WA_TEMPLATE ?? '',
-        WA_ITEMS_BULLET: kv.WA_ITEMS_BULLET ?? '',
+        RADIUS: kv.RADIUS ?? '',
+        SPACING: kv.SPACING ?? '',
+        ASSET_HEADER_URL: kv.ASSET_HEADER_URL ?? '',
+        ASSET_LOGO_URL: kv.ASSET_LOGO_URL ?? '',
+        ASSET_PLACEHOLDER_IMG_URL: kv.ASSET_PLACEHOLDER_IMG_URL ?? '',
+        WA_NUMBER: kv.WA_NUMBER ?? '',
+        WA_MESSAGE: kv.WA_MESSAGE ?? '',
         WA_PHONE_TARGET: kv.WA_PHONE_TARGET ?? '',
-
-        // PAGO
         PAY_ALIAS: kv.PAY_ALIAS ?? '',
         PAY_NOTE: kv.PAY_NOTE ?? '',
       });
@@ -158,35 +146,39 @@ export default async function handler(req, res) {
     if (req.method === 'GET' && route === 'viandas') {
       const r = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_VIANDAS}!A:G` // G = Orden
+        range: `${SHEET_VIANDAS}!A:G`
       });
       const values = r.data.values || [];
       const items = [];
       for (let i = 1; i < values.length; i++) {
-        const row = values[i] || [];
-        const disponible = String(row[5] ?? '').toLowerCase() === 'true';
+        const row = values[i];
+        const disponible = String(row[5]).toLowerCase() === 'true';
         if (!disponible) continue;
-
-        const ordRaw = row[6];
-        const ordNum = Number(String(ordRaw ?? '').trim());
-        const _orden = Number.isFinite(ordNum) ? ordNum : 999999;
-
         items.push({
           IdVianda: row[0],
           Nombre: row[1],
           Descripcion: row[2],
           Precio: Number(row[3]) | 0,
           Imagen: normalizeImage(row[4]),
-          _orden,
+          Orden: row[6] ?? ''
         });
       }
 
-      // Orden ascendente por columna G (Orden); si empata o falta, por Nombre
-      items.sort((a, b) => {
-        if (a._orden !== b._orden) return a._orden - b._orden;
-        return String(a.Nombre || '').localeCompare(String(b.Nombre || ''), 'es');
+      // Ordenamos por columna G (Orden) si viene cargada.
+      const toNum = (v) => {
+        const s = String(v ?? '').trim().replace(',', '.');
+        if (!s) return null;
+        const n = Number(s);
+        return Number.isFinite(n) ? n : null;
+      };
+      items.sort((a,b) => {
+        const ao = toNum(a.Orden);
+        const bo = toNum(b.Orden);
+        if (ao != null && bo != null && ao !== bo) return ao - bo;
+        if (ao != null && bo == null) return -1;
+        if (ao == null && bo != null) return 1;
+        return String(a.Nombre || '').localeCompare(String(b.Nombre || ''), 'es', { sensitivity: 'base' });
       });
-      for (const it of items) delete it._orden;
 
       return ok(res, { items });
     }
@@ -195,99 +187,46 @@ export default async function handler(req, res) {
     if (req.method === 'POST' && route === 'pedido') {
       const MAX_COMENT = 400, MAX_IP = 128, MAX_UA = 256;
 
-      // Enforce estado del formulario desde la Configuracion
-      const kv = await readConfigKV();
-      const enabled = asBool(kv.FORM_ENABLED, true);
-      if (!enabled) return err(res, 403, 'FORM_CLOSED');
-
-      const maxQty = clampInt(kv.UI_MAX_QTY_POR_VIANDA, 1, 99, 9);
-
       const body = req.body || {};
       const dni = String(body.dni || '').trim();
       const clave = String(body.clave || '').trim();
-
-      const ipHeader = (req.headers['x-forwarded-for'] ?? '').toString().split(',')[0] || req.socket?.remoteAddress || '';
-      const ip = String(ipHeader || '').slice(0, MAX_IP);
-      const ua = (body.ua || req.headers['user-agent'] || '').toString().slice(0, MAX_UA);
-
-      let comentarios = sanitizeForSheet(body.comentarios);
-      comentarios = comentarios.slice(0, MAX_COMENT);
-
+      const comentarios = sanitize(body.comentarios || '', MAX_COMENT);
+      const ip = sanitize(body.ip || '', MAX_IP);
+      const ua = sanitize(body.ua || '', MAX_UA);
       const items = Array.isArray(body.items) ? body.items : [];
-      if (!/^\d{8}$/.test(dni) || dni.startsWith('0') || !clave || !items.length) {
-        return err(res, 400, 'BAD_REQUEST');
-      }
 
-      // validar cliente
-      const rc = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_CLIENTES}!A:N`
-      });
-      const HC = rc.data.values?.[0] || [];
-      const iDNI = HC.indexOf('DNI'), iClave = HC.indexOf('Clave'), iEstado = HC.indexOf('Estado');
-      if (iDNI < 0 || iClave < 0 || iEstado < 0) return err(res, 500, 'CLIENTES_HEADERS_INVALID');
+      const kv = await getKV();
+      const enabled = String(kv.FORM_ENABLED ?? 'true').toLowerCase() === 'true';
+      if (!enabled) return bad(res, 403, { error: 'FORM_CLOSED' });
 
-      const rowsC = rc.data.values?.slice(1) || [];
-      const match = rowsC.find(r => String(r?.[iDNI] ?? '') === String(dni));
-      if (!match || String(match[iClave] ?? '') !== String(clave) || String(match[iEstado] ?? '') !== 'Validado') {
-        return err(res, 401, 'AUTH_FAIL');
-      }
+      if (!/^\d{8}$/.test(dni) || dni.startsWith('0')) return bad(res, 400, { error: 'BAD_DNI' });
+      if (!clave) return bad(res, 400, { error: 'BAD_CLAVE' });
+      if (!items.length) return bad(res, 400, { error: 'EMPTY' });
 
-      // catálogo para precios (solo viandas disponibles)
-      const rv = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_VIANDAS}!A:F`
-      });
-      const rowsV = rv.data.values?.slice(1) || [];
-      const map = new Map();
-      for (const row of rowsV) {
-        if (!row || row.length < 6) continue;
-        const disponible = String(row[5] ?? '').toLowerCase() === 'true';
-        if (!disponible) continue;
-        const id = String(row[0] ?? '').trim();
-        if (!id) continue;
-        map.set(id, { nombre: row[1], precio: Number(row[3]) | 0 });
-      }
+      const cliente = await getClienteByDni(dni);
+      if (!cliente) return bad(res, 401, { error: 'AUTH_FAIL' });
+      if (String(cliente.Clave || '').trim() !== clave) return bad(res, 401, { error: 'AUTH_FAIL' });
 
-      const idPedido = await getNextIdPedido();
+      const idPedido = `${Date.now()}-${Math.random().toString(16).slice(2,8)}`;
+      const fecha = nowISO();
 
-      let total = 0;
-      const toAppend = [];
-      for (const it of items) {
-        const id = String(it?.idVianda ?? '').trim();
-        const qty = clampInt(it?.cantidad ?? 0, 0, maxQty, 0);
-        if (!id || qty <= 0) continue;
-        const v = map.get(id);
-        if (!v) continue;
-        const subtotal = v.precio * qty;
-        total += subtotal;
-        toAppend.push([
-          idPedido,                 // IdPedido
-          String(dni),              // DNI
-          v.nombre,                 // Vianda (Nombre)
-          qty,                      // Cantidad
-          comentarios,              // Comentarios (saneado)
-          subtotal,                 // Precio = SUBTOTAL
-          new Date().toISOString(), // TimeStamp
-          ip,                       // IP
-          ua                        // UserAgent
-        ]);
-      }
-      if (!toAppend.length) return err(res, 400, 'NO_ITEMS');
+      // Guardamos en la hoja Pedidos (simple)
+      await appendPedido([
+        fecha,
+        idPedido,
+        cliente.Nombre || '',
+        dni,
+        comentarios,
+        ip,
+        ua,
+        JSON.stringify(items)
+      ]);
 
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_PEDIDOS}!A:I`,
-        valueInputOption: 'RAW',
-        requestBody: { values: toAppend }
-      });
-
-      return ok(res, { idPedido, total });
+      return ok(res, { idPedido });
     }
 
-    return err(res, 404, 'ROUTE_NOT_FOUND');
+    return bad(res, 404, { error: 'NOT_FOUND' });
   } catch (e) {
-    console.error('[pedidos] SERVER_ERROR', e);
-    return err(res, 500, 'SERVER_ERROR');
+    return bad(res, 500, { error: 'SERVER', message: String(e?.message || e) });
   }
 }
