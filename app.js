@@ -28,6 +28,7 @@
     tkt: document.getElementById("ticket"),
     tktContent: document.getElementById("ticket-content"),
     tktLogo: document.getElementById("tkt-logo"),
+    tktSub: document.getElementById("tkt-sub"),
     tktId: document.getElementById("tkt-id"),
     tktDate: document.getElementById("tkt-date"),
     tktAlias: document.getElementById("tkt-alias"),
@@ -44,38 +45,14 @@
     cart: new Map(),
     ip: null,
     lastSendAt: 0,
-    lastOrder: null,
   };
 
-  function setStatus(msg) {
-    if (els.status) els.status.textContent = msg;
-    if (els.statusSide) els.statusSide.textContent = msg;
-  }
-
-  function toast(msg, hold = false) {
-    if (!els.toast) return;
-    els.toast.textContent = msg;
-    els.toast.classList.add("show");
-    if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2400);
-  }
-
-  function fmtMoney(n) {
-    try { return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0); }
-    catch { return String(n); }
-  }
-
-  // ---------- Fetch seguro (NO se cae si API devuelve HTML) ----------
+  /* ===== Fetch seguro (si API devuelve HTML/500 no revienta todo) ===== */
   async function fetchJsonSafe(url, opts = {}) {
     const headers = Object.assign({}, opts.headers || {});
     if (API_KEY) headers["X-API-Key"] = API_KEY;
 
-    let res;
-    try {
-      res = await fetch(url, Object.assign({}, opts, { headers }));
-    } catch (e) {
-      throw new Error(`No se pudo conectar con la API (${url}).`);
-    }
-
+    const res = await fetch(url, Object.assign({}, opts, { headers }));
     const ct = (res.headers.get("content-type") || "").toLowerCase();
     const text = await res.text();
 
@@ -94,18 +71,28 @@
       throw err;
     }
 
-    if (!json) {
-      const err = new Error(`La API respondió algo que NO es JSON (revisar /api/pedidos).`);
-      err.status = res.status;
-      err.body = text;
-      throw err;
-    }
-
+    if (!json) throw new Error("La API respondió algo que NO es JSON.");
     return json;
   }
 
-  // ---------- Helpers imágenes ----------
-  function normalizeImageUrl(u) {
+  function setStatus(msg){
+    if (els.status) els.status.textContent = msg;
+    if (els.statusSide) els.statusSide.textContent = msg;
+  }
+
+  function toast(msg, hold=false){
+    if (!els.toast) return;
+    els.toast.textContent = msg;
+    els.toast.classList.add("show");
+    if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2200);
+  }
+
+  function fmtMoney(n){
+    try { return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0); }
+    catch { return String(n); }
+  }
+
+  function normalizeImageUrl(u){
     if (!u) return "";
     u = String(u).trim();
     let m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/);
@@ -116,7 +103,7 @@
     return u;
   }
 
-  function applyTheme() {
+  function applyTheme(){
     const t = state.config.THEME || {};
     const root = document.documentElement;
 
@@ -127,7 +114,6 @@
     if (t.RADIUS != null) root.style.setProperty("--radius", t.RADIUS + "px");
     if (t.SPACING != null) root.style.setProperty("--space", t.SPACING + "px");
 
-    // ✅ evitar “imagen rota”
     const headerUrl = state.config.ASSET_HEADER_URL ? String(state.config.ASSET_HEADER_URL).trim() : "";
     if (els.headerImg) {
       if (headerUrl) { els.headerImg.src = headerUrl; els.headerImg.style.display = "block"; }
@@ -138,8 +124,8 @@
       else { els.headerImgSide.src = ""; els.headerImgSide.style.display = "none"; }
     }
 
+    const logoUrl = state.config.ASSET_LOGO_URL ? String(state.config.ASSET_LOGO_URL).trim() : "";
     if (els.tktLogo) {
-      const logoUrl = state.config.ASSET_LOGO_URL ? String(state.config.ASSET_LOGO_URL).trim() : "";
       if (logoUrl) {
         els.tktLogo.crossOrigin = "anonymous";
         els.tktLogo.referrerPolicy = "no-referrer";
@@ -152,45 +138,59 @@
     }
   }
 
-  // ---------- UI catálogo ----------
-  function buildControls(v, current) {
+  /* ===== Catálogo / carrito ===== */
+  function buildControls(v, current){
     const frag = document.createDocumentFragment();
+
     if (current === 0) {
       const plus = document.createElement("button");
       plus.className = "plus";
       plus.textContent = "+";
       plus.addEventListener("click", () => updateQty(v, 1));
       frag.appendChild(plus);
-    } else {
-      const pill = document.createElement("div");
-      pill.className = "qty";
-      const minusBtn = document.createElement("button"); minusBtn.textContent = "–";
-      const n = document.createElement("span"); n.className = "n"; n.textContent = current;
-      const plusBtn = document.createElement("button"); plusBtn.textContent = "+";
-      minusBtn.addEventListener("click", () => updateQty(v, current - 1));
-      plusBtn.addEventListener("click", () => updateQty(v, current + 1));
-      pill.append(minusBtn, n, plusBtn);
-      frag.appendChild(pill);
+      return frag;
     }
+
+    const pill = document.createElement("div");
+    pill.className = "qty";
+
+    const minusBtn = document.createElement("button");
+    minusBtn.textContent = "–";
+
+    const n = document.createElement("span");
+    n.className = "n";
+    n.textContent = current;
+
+    const plusBtn = document.createElement("button");
+    plusBtn.textContent = "+";
+
+    minusBtn.addEventListener("click", () => updateQty(v, current - 1));
+    plusBtn.addEventListener("click", () => updateQty(v, current + 1));
+
+    pill.append(minusBtn, n, plusBtn);
+    frag.appendChild(pill);
     return frag;
   }
 
-  function buildCard(v) {
+  function buildCard(v){
     const card = document.createElement("article");
     card.className = "card";
     card.dataset.id = v.IdVianda;
 
     const imgBox = document.createElement("div");
     imgBox.className = "card-img";
+
     const img = document.createElement("img");
-    img.alt = v.Nombre; img.loading = "lazy"; img.decoding = "async";
+    img.alt = v.Nombre;
+    img.loading = "lazy";
+    img.decoding = "async";
 
     const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL ||
       (window.location.origin + "/assets/placeholder.png");
 
-    const srcNorm = normalizeImageUrl(v.Imagen);
-    img.src = placeholder;
-    if (srcNorm) img.src = srcNorm;
+    const src = normalizeImageUrl(v.Imagen);
+    img.src = src || placeholder;
+    img.onerror = () => { img.src = placeholder; };
 
     imgBox.appendChild(img);
 
@@ -222,23 +222,23 @@
     return card;
   }
 
-  function renderCatalogo() {
+  function renderCatalogo(){
     els.catalogo.innerHTML = "";
     if (!state.catalogo.length) {
       const empty = document.createElement("div");
+      empty.className = "resumen-empty";
       empty.textContent = state.config.MSG_EMPTY || "No hay viandas disponibles por ahora.";
-      empty.className = "card";
       els.catalogo.appendChild(empty);
       return;
     }
     for (const v of state.catalogo) els.catalogo.appendChild(buildCard(v));
   }
 
-  function renderResumen() {
+  function renderResumen(){
     els.resumenList.innerHTML = "";
     let total = 0;
     const items = Array.from(state.cart.values());
-    items.forEach(it => total += (it.precio * it.cantidad));
+    items.forEach(it => total += it.precio * it.cantidad);
 
     if (!items.length) {
       const empty = document.createElement("div");
@@ -246,16 +246,19 @@
       empty.textContent = "Carrito vacío";
       els.resumenList.appendChild(empty);
     } else {
-      const max = state.config.UI_RESUMEN_ITEMS_VISIBLES || 4;
+      const max = Number(state.config.UI_RESUMEN_ITEMS_VISIBLES || 4);
       items.slice(0, max).forEach(it => {
         const row = document.createElement("div");
         row.className = "resumen-item";
+
         const left = document.createElement("div");
         left.className = "resumen-left";
         left.textContent = `${it.cantidad}× ${it.nombre}`;
+
         const right = document.createElement("div");
         right.className = "resumen-right";
         right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
+
         row.append(left, right);
         els.resumenList.appendChild(row);
       });
@@ -265,21 +268,21 @@
     els.btnConfirmar.disabled = total <= 0;
   }
 
-  function patchCardControls(id, v, n) {
+  function patchCardControls(id, v, n){
     const card = els.catalogo.querySelector(`[data-id="${id}"]`);
     if (!card) return;
     const bottom = card.querySelector(".card-bottom");
     if (!bottom) return;
-    const newControls = buildControls(v, n);
+
     const oldControls = bottom.lastElementChild;
+    const newControls = buildControls(v, n);
     if (oldControls) bottom.replaceChild(newControls, oldControls);
     else bottom.appendChild(newControls);
   }
 
-  function updateQty(v, n) {
+  function updateQty(v, n){
     const max = Number(state.config.UI_MAX_QTY_POR_VIANDA || 9);
-    if (n < 0) n = 0;
-    if (n > max) { toast(state.config.MSG_LIMIT || "Máximo 9 por vianda."); n = max; }
+    n = Math.max(0, Math.min(max, n));
 
     if (n === 0) state.cart.delete(v.IdVianda);
     else state.cart.set(v.IdVianda, { id: v.IdVianda, nombre: v.Nombre, precio: Number(v.Precio), cantidad: n });
@@ -288,11 +291,140 @@
     renderResumen();
   }
 
-  // ---------- Cargar config / catálogo ----------
-  async function loadConfig() {
-    setStatus("Obteniendo configuración…");
+  /* ===== Modales ===== */
+  function openSheet(){ els.sheet.classList.remove("hidden"); }
+  function closeSheet(){ els.sheet.classList.add("hidden"); }
+  function closeTicket(){ els.tkt.classList.add("hidden"); }
 
+  /* ===== Ticket ===== */
+  async function waitForHtml2Canvas(){
+    const start = Date.now();
+    while (!window.html2canvas) {
+      await new Promise(r => setTimeout(r, 100));
+      if (Date.now() - start > 4000) break;
+    }
+    return !!window.html2canvas;
+  }
+
+  function openTicket(order){
+    els.tktId.textContent = order.idPedido;
+    els.tktDate.textContent = order.fecha;
+    els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
+    els.tktNote.textContent = state.config.PAY_NOTE || "";
+
+    els.tktItems.innerHTML = "";
+    order.items.forEach(it => {
+      const row = document.createElement("div");
+      row.className = "tkt-row";
+
+      const left = document.createElement("div");
+      left.className = "tkt-left";
+      left.textContent = `${it.cantidad}× ${it.nombre}`;
+
+      const right = document.createElement("div");
+      right.className = "tkt-right";
+      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
+
+      row.append(left, right);
+      els.tktItems.appendChild(row);
+    });
+
+    els.tktTotal.textContent = "$ " + fmtMoney(order.total);
+
+    els.tkt.classList.remove("hidden");
+
+    if (els.tktClose) els.tktClose.onclick = closeTicket;
+
+    els.tktSave.onclick = async () => {
+      els.tktSave.disabled = true;
+      try {
+        const ready = await waitForHtml2Canvas();
+        if (!ready) { toast("No se pudo preparar el comprobante"); return; }
+
+        const canvas = await window.html2canvas(els.tktContent, {
+          backgroundColor:"#ffffff",
+          scale:2,
+          useCORS:true,
+          allowTaint:false
+        });
+
+        const blob = await new Promise(r => canvas.toBlob(r, "image/png", 1));
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `pedido-${order.idPedido}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        toast("Imagen descargada ✓");
+      } catch {
+        toast("No se pudo guardar el comprobante");
+      } finally {
+        els.tktSave.disabled = false;
+      }
+    };
+  }
+
+  /* ===== Envío (queda como estaba; si tu API valida, esto funciona) ===== */
+  async function enviarPedido(){
+    const dni = els.dni.value.trim();
+    const clave = els.clave.value.trim();
+    const comentarios = els.comentarios.value.trim();
+
+    if (!/^\d{8}$/.test(dni) || dni.startsWith("0")) { toast("DNI inválido."); return; }
+    if (!clave) { toast("Ingresá tu clave."); return; }
+
+    const cartItems = Array.from(state.cart.values());
+    if (!cartItems.length) { toast("Tu carrito está vacío."); return; }
+
+    if (Date.now() - state.lastSendAt < 1200) { toast("Pará un toque…"); return; }
+    state.lastSendAt = Date.now();
+
+    els.btnEnviar.disabled = true;
+    els.btnEnviar.textContent = "Enviando…";
+
+    try {
+      const payloadItems = cartItems.map(it => ({ idVianda: it.id, nombre: it.nombre, cantidad: it.cantidad }));
+      const data = await fetchJsonSafe(`${API}?route=pedido`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({
+          dni, clave, comentarios,
+          items: payloadItems,
+          ua: navigator.userAgent
+        })
+      });
+
+      const id = data.idPedido;
+      let total = 0; cartItems.forEach(it => total += it.precio * it.cantidad);
+
+      const order = {
+        idPedido: id,
+        items: cartItems.map(x => ({ nombre:x.nombre, cantidad:x.cantidad, precio:x.precio })),
+        total,
+        fecha: new Date().toLocaleString("es-AR", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit", year:"2-digit" })
+      };
+
+      closeSheet();
+      openTicket(order);
+
+      state.cart.clear();
+      renderCatalogo();
+      renderResumen();
+
+    } catch (e) {
+      toast(state.config.MSG_SERVER_FAIL || `No pudimos completar el pedido (${e.message}).`, true);
+    } finally {
+      els.btnEnviar.disabled = false;
+      els.btnEnviar.textContent = "Enviar";
+    }
+  }
+
+  /* ===== Load config + catálogo ===== */
+  async function loadConfig(){
+    setStatus("Obteniendo configuración…");
     const conf = await fetchJsonSafe(`${API}?route=ui-config`);
+
     state.config = {
       THEME: {
         PRIMARY: conf.THEME_PRIMARY,
@@ -314,7 +446,6 @@
       MSG_AUTH_FAIL: conf.MSG_AUTH_FAIL,
       MSG_LIMIT: conf.MSG_LIMIT,
       MSG_SERVER_FAIL: conf.MSG_SERVER_FAIL,
-      MSG_SUCCESS: conf.MSG_SUCCESS,
       WA_ENABLED: String(conf.WA_ENABLED || "true").toLowerCase() === "true",
       WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
       PAY_ALIAS: conf.PAY_ALIAS || "",
@@ -338,42 +469,52 @@
     return true;
   }
 
-  async function loadCatalogo() {
+  async function loadCatalogo(){
     setStatus("Cargando catálogo…");
     const data = await fetchJsonSafe(`${API}?route=viandas`);
     state.catalogo = Array.isArray(data.items) ? data.items.slice() : [];
+
+    // Orden por columna G (Orden) si viene
+    const toNum = (v) => {
+      const s = String(v ?? "").trim().replace(",", ".");
+      if (!s) return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    };
+    state.catalogo.sort((a,b) => {
+      const ao = toNum(a.Orden);
+      const bo = toNum(b.Orden);
+      if (ao != null && bo != null && ao !== bo) return ao - bo;
+      if (ao != null && bo == null) return -1;
+      if (ao == null && bo != null) return 1;
+      return String(a.Nombre || "").localeCompare(String(b.Nombre || ""), "es", { sensitivity:"base" });
+    });
+
     renderCatalogo();
     setStatus("Catálogo actualizado ✓");
   }
 
-  // ---------- Botones / modales (mínimo, para que no explote) ----------
-  function openSheet() { els.sheet.classList.remove("hidden"); }
-  function closeSheet() { els.sheet.classList.add("hidden"); }
-  function closeTicket() { els.tkt.classList.add("hidden"); }
+  /* ===== Events ===== */
+  els.btnConfirmar.addEventListener("click", openSheet);
+  els.btnCancelar.addEventListener("click", closeSheet);
+  els.btnEnviar.addEventListener("click", enviarPedido);
 
-  if (els.btnConfirmar) els.btnConfirmar.addEventListener("click", openSheet);
-  if (els.btnCancelar) els.btnCancelar.addEventListener("click", closeSheet);
-  if (els.tktClose) els.tktClose.addEventListener("click", closeTicket);
-  if (els.sheet) els.sheet.addEventListener("click", (e) => { if (e.target === els.sheet) closeSheet(); });
-  if (els.tkt) els.tkt.addEventListener("click", (e) => { if (e.target === els.tkt) closeTicket(); });
+  // click fuera para cerrar sheet/ticket
+  els.sheet.addEventListener("click", (e) => { if (e.target === els.sheet) closeSheet(); });
+  els.tkt.addEventListener("click", (e) => { if (e.target === els.tkt) closeTicket(); });
 
+  // ESC para cerrar
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (els.tkt && !els.tkt.classList.contains("hidden")) closeTicket();
-    if (els.sheet && !els.sheet.classList.contains("hidden")) closeSheet();
+    if (!els.tkt.classList.contains("hidden")) closeTicket();
+    if (!els.sheet.classList.contains("hidden")) closeSheet();
   });
 
-  // ---------- Boot (con manejo de errores visible) ----------
-  (async function boot() {
+  /* ===== Boot ===== */
+  (async function boot(){
     try {
-      // si config.js no cargó, esto te lo deja claro
-      if (!window.APP_CONFIG) {
-        console.warn("APP_CONFIG no está definido: /config.js no cargó o está mal.");
-      }
-
       const ok = await loadConfig();
       if (!ok) return;
-
       await loadCatalogo();
       renderResumen();
     } catch (e) {
