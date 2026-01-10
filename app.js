@@ -5,7 +5,9 @@
 
   const els = {
     headerImg: document.getElementById("header-img"),
+    headerImgSide: document.getElementById("header-img-side"),
     status: document.getElementById("conn-status"),
+    statusSide: document.getElementById("conn-status-side"),
     catalogo: document.getElementById("catalogo"),
     resumenList: document.getElementById("resumen-list"),
     resumenTotal: document.getElementById("resumen-total"),
@@ -43,6 +45,22 @@
     ip: null,
     lastOrder: null,
   };
+
+  function setStatus(msg) {
+    if (els.status) els.status.textContent = msg;
+    if (els.statusSide) els.statusSide.textContent = msg;
+  }
+
+  function updateSplitMode(forceOff = false) {
+    // Split solo tiene sentido si el formulario está habilitado y la app está visible
+    const canSplit = !forceOff && state.config?.FORM_ENABLED && !els.app.classList.contains('hidden');
+    if (!canSplit) {
+      document.body.classList.remove('split');
+      return;
+    }
+    const mq = window.matchMedia && window.matchMedia('(min-width: 960px) and (orientation: landscape)').matches;
+    document.body.classList.toggle('split', !!mq);
+  }
 
   // ===== Helpers imágenes (Drive + Blob) =====
   function normalizeImageUrl(u) {
@@ -83,8 +101,13 @@
     if (state.config.ASSET_HEADER_URL) {
       els.headerImg.src = state.config.ASSET_HEADER_URL;
       els.headerImg.style.display = "block";
+      if (els.headerImgSide) {
+        els.headerImgSide.src = state.config.ASSET_HEADER_URL;
+        els.headerImgSide.style.display = "block";
+      }
     } else {
       els.headerImg.style.display = "none";
+      if (els.headerImgSide) els.headerImgSide.style.display = "none";
     }
 
     // Ticket logo
@@ -245,7 +268,7 @@
 
   // ===== Config desde API =====
   async function loadConfig() {
-    els.status.textContent = "Obteniendo configuración…";
+    setStatus("Obteniendo configuración…");
     const res = await fetch(API + "?route=ui-config", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
     const conf = await res.json();
     state.config = {
@@ -280,6 +303,7 @@
     applyTheme();
 
     if (!state.config.FORM_ENABLED) {
+      updateSplitMode(true);
       els.app.classList.add("hidden");
       els.closed.classList.remove("hidden");
       els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
@@ -288,21 +312,22 @@
         els.closedWA.classList.remove("hidden");
         els.closedWA.addEventListener("click", () => shareWA({closed:true}));
       }
-      els.status.textContent = "Formulario cerrado";
+      setStatus("Formulario cerrado");
       return false;
     }
-    els.status.textContent = "Configuración cargada";
+    setStatus("Configuración cargada");
+    updateSplitMode(false);
     return true;
   }
 
   async function loadCatalogo() {
-    els.status.textContent = "Cargando catálogo…";
+    setStatus("Cargando catálogo…");
     const res = await fetch(API + "?route=viandas", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
     const data = await res.json();
-    if (data.closed) { els.status.textContent = "Formulario cerrado"; return; }
+    if (data.closed) { setStatus("Formulario cerrado"); return; }
     state.catalogo = Array.isArray(data.items) ? data.items : [];
     renderCatalogo();
-    els.status.textContent = "Catálogo actualizado ✓";
+    setStatus("Catálogo actualizado ✓");
   }
 
   function openSheet() { els.sheet.classList.remove("hidden"); }
@@ -515,6 +540,9 @@
     await getIP();
     const ok = await loadConfig();
     if (!ok) return;
+    updateSplitMode(false);
+    window.addEventListener('resize', () => updateSplitMode(false));
+    window.addEventListener('orientationchange', () => updateSplitMode(false));
     await loadCatalogo();
     renderResumen();
   })();
