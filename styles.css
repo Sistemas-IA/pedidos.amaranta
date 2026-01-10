@@ -10,18 +10,18 @@ body{
   background:var(--bg); color:var(--text);
 }
 
-/* Header / banner fijo */
+/* Header / banner fijo (MOBILE) */
 .hdr{
   position:sticky; top:0; z-index:1000;
   background:#fff; border-bottom:1px solid #eee;
 }
 .hdr #header-img{
   display:block; width:100%; height:auto; max-height:320px;
-  object-fit:cover; /* mobile */
+  object-fit:cover;
 }
 @media (min-width: 900px){
   .hdr #header-img{
-    object-fit:contain; /* desktop: no recorta */
+    object-fit:contain;
     background:#fff;
   }
 }
@@ -49,7 +49,7 @@ main{max-width:1200px;margin:0 auto;padding:16px}
   .grid{ grid-template-columns: 1fr; }
 }
 
-/* Card horizontal 60/40 (tu estilo) */
+/* Card horizontal 60/40 */
 .card{
   border:1px solid #e6e6e6;
   border-radius:var(--radius);
@@ -72,11 +72,12 @@ main{max-width:1200px;margin:0 auto;padding:16px}
   display:grid;
   grid-template-rows:auto 1fr auto;
   gap:8px;
+  min-height:0;
 }
 .card-title{font-size:18px;margin:0}
 .card-desc{font-size:13px;color:#555}
 
-/* 🔧 ACÁ está la clave del “no veo el +”: vuelve a fila precio + control */
+/* PRECIO + SELECTOR (sin inventos) */
 .card-bottom{
   margin-top:auto;
   display:flex;
@@ -86,7 +87,6 @@ main{max-width:1200px;margin:0 auto;padding:16px}
 }
 .card-price{font-weight:700}
 
-/* Control “+” que se expande */
 .qty{
   display:inline-flex;
   gap:8px;
@@ -112,7 +112,7 @@ main{max-width:1200px;margin:0 auto;padding:16px}
   justify-content:center;
 }
 
-/* Resumen (mobile / normal) */
+/* Resumen (mobile/normal) */
 #resumen{
   position:sticky;
   bottom:0;
@@ -147,7 +147,7 @@ main{max-width:1200px;margin:0 auto;padding:16px}
 }
 #btn-confirmar:disabled{ opacity:.5; cursor:not-allowed }
 
-/* En ≥1200px: resumen en 3ra columna (tu comportamiento previo) */
+/* En ≥1200px: resumen en 3ra columna (modo normal) */
 @media (min-width: 1200px){
   #resumen{
     display:grid;
@@ -254,40 +254,46 @@ textarea{ min-height:70px }
   .plus{width:30px;height:30px}
 }
 
-/* ===== Desktop apaisado 30/70 (solo con body.split) ===== */
+/* ===== SPLIT DESKTOP APAISADO 30/70 (arreglado en serio) ===== */
 .sidehdr{ display:none; }
 .sidehdr #header-img-side{
-  display:block; width:100%;
-  height:auto; max-height:260px;
-  object-fit:contain; background:#fff;
+  display:block;
+  width:100%;
+  height:auto;
+  max-height:220px;   /* si tu header tiene mucho blanco, esto ayuda a que no “se coma” media pantalla */
+  object-fit:contain;
+  object-position: top center;
+  background:#fff;
 }
 .side-mini{ padding-top:0; }
+.sidehdr{ flex:0 0 auto; }
 
 @media (min-width: 960px) and (orientation: landscape){
   body.split{
-    height:100vh;
-    overflow:hidden; /* el scroll va adentro de cada columna */
+    overflow:hidden; /* cero scroll del body */
   }
 
+  /* escondo el header global y uso el de la izquierda */
   body.split .hdr{ display:none; }
 
-  /* contenedor split a pantalla completa */
+  /* ⚠️ clave: app ocupando TODO el viewport, siempre */
   body.split main#app{
+    position:fixed;
+    inset:0;
     max-width:none;
     margin:0;
     padding:0;
-    height:100vh;
     display:grid;
     grid-template-columns: 30% 70%;
-    align-items:stretch;
+    background:var(--bg);
   }
 
-  /* izquierda (resumen) */
+  /* izquierda: header arriba + carrito abajo */
   body.split #resumen{
     grid-column:1;
     height:100%;
-    position:relative;    /* 🔧 saca el sticky */
-    bottom:auto;          /* 🔧 saca el sticky */
+    position:relative;
+    bottom:auto;
     border-top:0;
     border-right:1px solid #eee;
     background:#fff;
@@ -306,23 +312,24 @@ textarea{ min-height:70px }
     margin-bottom:0;
     overflow-y:auto;
     flex:1 1 auto;
+    min-height:0;
   }
   body.split #resumen .bar{
     padding:10px 16px;
     border-top:1px solid #eee;
     background:#fff;
-    position:sticky;
-    bottom:0;
+    flex:0 0 auto;
   }
 
-  /* derecha (catálogo) */
+  /* derecha: catálogo 2 columnas + scroll independiente */
   body.split #catalogo{
     grid-column:2;
     height:100%;
     overflow-y:auto;
     padding:16px;
     min-width:0;
-    align-self:stretch;
+    min-height:0;
+    align-content:start;
   }
   body.split #catalogo.grid{
     grid-template-columns: repeat(2, 1fr);
