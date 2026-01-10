@@ -69,10 +69,10 @@
     catch { return String(n); }
   }
 
-  function toast(msg, hold=false) {
+  function toast(msg) {
     els.toast.textContent = msg;
     els.toast.classList.add("show");
-    if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2000);
+    setTimeout(() => els.toast.classList.remove("show"), 2000);
   }
 
   // ===== THEME / Assets =====
@@ -152,6 +152,7 @@
     const driveAlt = srcNorm && isGoogleDrive(srcNorm)
       ? srcNorm.replace("export=view", "export=download") : "";
     img.src = placeholder;
+
     if (srcNorm) {
       const probe = new Image();
       if (isGoogleDrive(srcNorm)) probe.referrerPolicy = "no-referrer";
@@ -167,18 +168,24 @@
       };
       probe.src = srcNorm;
     }
+
     imgBox.appendChild(img);
 
     // BODY
     const body = document.createElement("div");
     body.className = "card-body";
+
     const title = document.createElement("h3");
-    title.className = "card-title"; title.textContent = v.Nombre;
+    title.className = "card-title";
+    title.textContent = v.Nombre;
+
     const desc = document.createElement("div");
-    desc.className = "card-desc"; desc.textContent = v.Descripcion || "";
+    desc.className = "card-desc";
+    desc.textContent = v.Descripcion || "";
 
     const bottom = document.createElement("div");
     bottom.className = "card-bottom";
+
     const price = document.createElement("div");
     price.className = "card-price";
     price.textContent = "$ " + fmtMoney(v.Precio);
@@ -190,42 +197,14 @@
     bottom.append(price, controlsBox);
     body.append(title, desc, bottom);
     card.append(imgBox, body);
+
     return card;
   }
 
   function renderCatalogo() {
     els.catalogo.innerHTML = "";
-    if (!state.catalogo.length) {
-      const empty = document.createElement("div");
-      empty.textContent = state.config.MSG_EMPTY || "No hay viandas disponibles por ahora.";
-      empty.className = "card";
-      els.catalogo.appendChild(empty);
-      return;
-    }
+    if (!state.catalogo.length) return;
     for (const v of state.catalogo) els.catalogo.appendChild(buildCard(v));
-  }
-
-  function renderResumen() {
-    els.resumenList.innerHTML = "";
-    let total = 0;
-    const items = Array.from(state.cart.values());
-    items.forEach(it => total += (it.precio * it.cantidad));
-
-    items.slice(0, (state.config.UI_RESUMEN_ITEMS_VISIBLES || 4)).forEach(it => {
-      const row = document.createElement("div");
-      row.className = "resumen-item";
-      const left = document.createElement("div");
-      left.className = "resumen-left";
-      left.textContent = `${it.cantidad}× ${it.nombre}`;
-      const right = document.createElement("div");
-      right.className = "resumen-right";
-      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
-      row.append(left, right);
-      els.resumenList.appendChild(row);
-    });
-
-    els.resumenTotal.textContent = "$ " + fmtMoney(total);
-    els.btnConfirmar.disabled = total <= 0;
   }
 
   function patchCardControls(id, v, n) {
@@ -233,20 +212,53 @@
     if (!card) return;
     const bottom = card.querySelector(".card-bottom");
     if (!bottom) return;
-    const newControls = buildControls(v, n);
-    const oldControls = bottom.lastElementChild;
-    if (oldControls) bottom.replaceChild(newControls, oldControls);
-    else bottom.appendChild(newControls);
+    const controlsHolder = bottom.lastElementChild;
+    if (!controlsHolder) return;
+    controlsHolder.innerHTML = "";
+    controlsHolder.appendChild(buildControls(v, n));
   }
 
   function updateQty(v, n) {
     const max = Number(state.config.UI_MAX_QTY_POR_VIANDA || 9);
     if (n < 0) n = 0;
     if (n > max) { toast(state.config.MSG_LIMIT || "Máximo 9 por vianda."); n = max; }
+
     if (n === 0) state.cart.delete(v.IdVianda);
     else state.cart.set(v.IdVianda, { id: v.IdVianda, nombre: v.Nombre, precio: Number(v.Precio), cantidad: n });
+
     patchCardControls(v.IdVianda, v, n);
     renderResumen();
+  }
+
+  // Resumen
+  function renderResumen() {
+    els.resumenList.innerHTML = "";
+    let total = 0;
+    const items = Array.from(state.cart.values());
+    items.forEach(it => total += (it.precio * it.cantidad));
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "resumen-empty";
+      empty.textContent = "Carrito vacío";
+      els.resumenList.appendChild(empty);
+    } else {
+      items.slice(0, (state.config.UI_RESUMEN_ITEMS_VISIBLES || 4)).forEach(it => {
+        const row = document.createElement("div");
+        row.className = "resumen-item";
+        const left = document.createElement("div");
+        left.className = "resumen-left";
+        left.textContent = `${it.cantidad}× ${it.nombre}`;
+        const right = document.createElement("div");
+        right.className = "resumen-right";
+        right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
+        row.append(left, right);
+        els.resumenList.appendChild(row);
+      });
+    }
+
+    els.resumenTotal.textContent = "$ " + fmtMoney(total);
+    els.btnConfirmar.disabled = total <= 0;
   }
 
   async function getIP() {
@@ -256,11 +268,11 @@
     } catch {}
   }
 
-  // ===== Config desde API =====
   async function loadConfig() {
     setStatus("Obteniendo configuración…");
     const res = await fetch(API + "?route=ui-config", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
     const conf = await res.json();
+
     state.config = {
       THEME: {
         PRIMARY: conf.THEME_PRIMARY,
@@ -283,10 +295,10 @@
       MSG_LIMIT: conf.MSG_LIMIT,
       MSG_SERVER_FAIL: conf.MSG_SERVER_FAIL,
       MSG_SUCCESS: conf.MSG_SUCCESS,
-      PAY_ALIAS: conf.PAY_ALIAS || "",
-      PAY_NOTE: conf.PAY_NOTE || "",
       WA_NUMBER: conf.WA_NUMBER || "",
       WA_MESSAGE: conf.WA_MESSAGE || "",
+      PAY_ALIAS: conf.PAY_ALIAS || "",
+      PAY_NOTE: conf.PAY_NOTE || "",
     };
 
     applyTheme();
@@ -296,19 +308,10 @@
       els.closed.classList.remove("hidden");
       els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
       els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp.";
-      if (state.config.WA_NUMBER) {
-        els.closedWA.classList.remove("hidden");
-        els.closedWA.onclick = () => {
-          const text = encodeURIComponent(state.config.WA_MESSAGE || "Hola! Quiero hacer un pedido.");
-          window.open(`https://wa.me/${state.config.WA_NUMBER}?text=${text}`, "_blank");
-        };
-      }
       setStatus("Formulario cerrado");
       return false;
     }
 
-    els.closed.classList.add("hidden");
-    els.app.classList.remove("hidden");
     setStatus("Configuración cargada");
     return true;
   }
@@ -317,40 +320,30 @@
     setStatus("Cargando catálogo…");
     const res = await fetch(API + "?route=viandas", { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
     const data = await res.json();
-    if (data.closed) { setStatus("Formulario cerrado"); return; }
     state.catalogo = Array.isArray(data.items) ? data.items : [];
+
+    // Orden por columna G si viene (Orden)
+    const toNum = (v) => {
+      const s = String(v ?? "").trim().replace(",", ".");
+      if (!s) return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    };
+    state.catalogo.sort((a,b) => {
+      const ao = toNum(a.Orden);
+      const bo = toNum(b.Orden);
+      if (ao != null && bo != null && ao !== bo) return ao - bo;
+      if (ao != null && bo == null) return -1;
+      if (ao == null && bo != null) return 1;
+      return String(a.Nombre || "").localeCompare(String(b.Nombre || ""), "es", { sensitivity:"base" });
+    });
+
     renderCatalogo();
     setStatus("Catálogo actualizado ✓");
   }
 
   function openSheet() { els.sheet.classList.remove("hidden"); }
   function closeSheet() { els.sheet.classList.add("hidden"); }
-
-  function openTicket(order) {
-    els.tktSub.textContent = "";
-    els.tktId.textContent = order.idPedido;
-    els.tktDate.textContent = order.fecha;
-    els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
-
-    els.tktItems.innerHTML = "";
-    order.items.forEach(it => {
-      const row = document.createElement("div");
-      row.className = "tkt-row";
-      const left = document.createElement("div");
-      left.className = "tkt-left";
-      left.textContent = `${it.cantidad}× ${it.nombre}`;
-      const right = document.createElement("div");
-      right.className = "tkt-right";
-      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
-      row.append(left, right);
-      els.tktItems.appendChild(row);
-    });
-
-    els.tktTotal.textContent = "$ " + fmtMoney(order.total);
-    els.tktNote.textContent = state.config.PAY_NOTE || "";
-
-    els.tkt.classList.remove("hidden");
-  }
 
   async function waitForHtml2Canvas() {
     const start = Date.now();
@@ -398,8 +391,31 @@
     return () => { restores.forEach(fn => fn()); };
   }
 
-  async function showAndSaveTicket(order) {
-    openTicket(order);
+  function openTicket(order) {
+    els.tktSub.textContent = "";
+    els.tktId.textContent = order.idPedido;
+    els.tktDate.textContent = order.fecha;
+    els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
+
+    els.tktItems.innerHTML = "";
+    order.items.forEach(it => {
+      const row = document.createElement("div");
+      row.className = "tkt-row";
+      const left = document.createElement("div");
+      left.className = "tkt-left";
+      left.textContent = `${it.cantidad}× ${it.nombre}`;
+      const right = document.createElement("div");
+      right.className = "tkt-right";
+      right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
+      row.append(left, right);
+      els.tktItems.appendChild(row);
+    });
+
+    els.tktTotal.textContent = "$ " + fmtMoney(order.total);
+    els.tktNote.textContent = state.config.PAY_NOTE || "";
+
+    els.tkt.classList.remove("hidden");
+
     els.tktSave.onclick = async () => {
       els.tktSave.disabled = true;
       try {
@@ -456,6 +472,7 @@
       });
 
       const data = await res.json();
+
       if (!res.ok) {
         if (data && data.error === "FORM_CLOSED") toast("Pedidos cerrados.");
         else if (data && data.error === "AUTH_FAIL") toast(state.config.MSG_AUTH_FAIL || "Clave incorrecta.");
@@ -465,6 +482,7 @@
 
       const id = data.idPedido;
       let total = 0; cartItems.forEach(it => total += (it.precio * it.cantidad));
+
       const order = {
         idPedido: id,
         items: cartItems.map(x => ({ nombre: x.nombre, cantidad: x.cantidad, precio: x.precio })),
@@ -473,11 +491,12 @@
       };
 
       closeSheet();
-      await showAndSaveTicket(order);
+      openTicket(order);
 
       state.cart.clear();
       renderCatalogo();
       renderResumen();
+
     } catch {
       toast(state.config.MSG_SERVER_FAIL || "No pudimos completar el pedido.");
     } finally {
