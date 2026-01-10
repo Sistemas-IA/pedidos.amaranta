@@ -1,323 +1,385 @@
-:root{
-  --primary:#6BBF59; --secondary:#3A5A40; --bg:#fff; --text:#111;
-  --radius:16px; --space:8px;
-}
-*{box-sizing:border-box}
-html,body{height:100%}
-body{
-  margin:0;
-  font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial,sans-serif;
-  background:var(--bg); color:var(--text);
-}
+(() => {
+  const cfg = window.APP_CONFIG || {};
+  const API = (cfg.API_BASE_URL && String(cfg.API_BASE_URL).trim()) || "/api/pedidos";
+  const API_KEY = (cfg.API_KEY && String(cfg.API_KEY).trim()) || "";
 
-/* Header / banner fijo */
-.hdr{
-  position:sticky; top:0; z-index:1000;
-  background:#fff; border-bottom:1px solid #eee;
-}
-.hdr #header-img{
-  display:block; width:100%; height:auto; max-height:320px;
-  object-fit:cover; /* mobile */
-}
-@media (min-width: 900px){
-  .hdr #header-img{
-    object-fit:contain; /* desktop: no recorta */
-    background:#fff;
-  }
-}
+  const els = {
+    headerImg: document.getElementById("header-img"),
+    headerImgSide: document.getElementById("header-img-side"),
+    status: document.getElementById("conn-status"),
+    statusSide: document.getElementById("conn-status-side"),
+    catalogo: document.getElementById("catalogo"),
+    resumenList: document.getElementById("resumen-list"),
+    resumenTotal: document.getElementById("resumen-total"),
+    btnConfirmar: document.getElementById("btn-confirmar"),
+    sheet: document.getElementById("auth-sheet"),
+    btnCancelar: document.getElementById("btn-cancelar"),
+    btnEnviar: document.getElementById("btn-enviar"),
+    dni: document.getElementById("dni"),
+    clave: document.getElementById("clave"),
+    comentarios: document.getElementById("comentarios"),
+    toast: document.getElementById("toast"),
+    closed: document.getElementById("closed"),
+    closedTitle: document.getElementById("closed-title"),
+    closedMsg: document.getElementById("closed-msg"),
+    closedWA: document.getElementById("closed-wa"),
+    app: document.getElementById("app"),
+    // Ticket
+    tkt: document.getElementById("ticket"),
+    tktContent: document.getElementById("ticket-content"),
+    tktLogo: document.getElementById("tkt-logo"),
+    tktId: document.getElementById("tkt-id"),
+    tktDate: document.getElementById("tkt-date"),
+    tktAlias: document.getElementById("tkt-alias"),
+    tktItems: document.getElementById("tkt-items"),
+    tktTotal: document.getElementById("tkt-total"),
+    tktNote: document.getElementById("tkt-note"),
+    tktSave: document.getElementById("tkt-save"),
+    tktClose: document.getElementById("tkt-close"),
+  };
 
-.wrap.mini{
-  max-width:1200px;margin:0 auto;padding:8px 16px;display:flex;align-items:center
-}
-#conn-status{margin-left:auto;font-size:12px;color:#666}
+  const state = {
+    config: {},
+    catalogo: [],
+    cart: new Map(),
+    ip: null,
+    lastSendAt: 0,
+    lastOrder: null,
+  };
 
-/* Main containers */
-main{max-width:1200px;margin:0 auto;padding:16px}
-
-/* Grid de cards: 3 / 2 / 1 col */
-.grid{
-  display:grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap:16px;
-}
-@media (max-width: 1199px){
-  .grid{ grid-template-columns: repeat(2, 1fr); }
-}
-@media (max-width: 899px){
-  .grid{ grid-template-columns: 1fr; }
-}
-
-/* Card horizontal 60/40 */
-.card{
-  border:1px solid #e6e6e6; border-radius:var(--radius); overflow:hidden; background:#fff;
-  display:grid; grid-template-columns: 3fr 2fr; min-height:220px;
-}
-.card-img{background:#f7f7f7}
-.card-img img{ width:100%; aspect-ratio:1/1; object-fit:cover; display:block; }
-
-.card-body{
-  padding:14px; display:grid; grid-template-rows:auto 1fr auto; gap:8px;
-  min-height:0;
-}
-.card-title{font-size:18px;margin:0}
-.card-desc{font-size:13px;color:#555}
-.card-bottom{
-  margin-top:auto;
-  display:flex;
-  flex-direction:column;          /* mobile: como estaba */
-  align-items:flex-end;
-  gap:8px;
-}
-.card-price{font-weight:700}
-.qty{
-  display:inline-flex; gap:8px; align-items:center;
-  border:1px solid #ddd; border-radius:999px;
-  padding:4px 10px; width:max-content
-}
-.qty button,.plus{
-  border:0; background:#f1f5f0; border-radius:999px;
-  padding:6px 10px; cursor:pointer;
-  font-size:16px; line-height:1
-}
-.plus{
-  width:32px; height:32px;
-  display:inline-flex; align-items:center; justify-content:center
-}
-
-/* ✅ Desktop: cards con proporción 1.5 y bottom en fila (mejor uso del espacio) */
-@media (min-width: 900px){
-  .card{
-    aspect-ratio: 3 / 2;   /* 1.5 */
-    min-height:auto;
+  function setStatus(msg) {
+    if (els.status) els.status.textContent = msg;
+    if (els.statusSide) els.statusSide.textContent = msg;
   }
 
-  .card-bottom{
-    flex-direction:row;
-    align-items:flex-end;
-    justify-content:space-between;
-    gap:12px;
+  function toast(msg, hold = false) {
+    if (!els.toast) return;
+    els.toast.textContent = msg;
+    els.toast.classList.add("show");
+    if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2400);
   }
 
-  /* clamp para que no “invada” el precio/selector */
-  .card-title{
-    display:-webkit-box;
-    -webkit-box-orient:vertical;
-    -webkit-line-clamp:2;
-    overflow:hidden;
-  }
-  .card-desc{
-    display:-webkit-box;
-    -webkit-box-orient:vertical;
-    -webkit-line-clamp:3;
-    overflow:hidden;
-  }
-}
-
-/* Resumen */
-#resumen{ position:sticky; bottom:0; background:#fff; border-top:1px solid #eee; padding:10px 16px; }
-#resumen-list{ font-size:14px; color:#444; margin-bottom:6px; display:flex; flex-direction:column; gap:4px }
-.resumen-item{ display:flex; justify-content:space-between; gap:12px }
-.resumen-left{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
-.resumen-right{ font-weight:600 }
-.resumen-empty{ color:#666; font-size:13px; padding:4px 0; }
-#resumen .bar{ display:flex; align-items:center; gap:12px }
-.total-label{ opacity:.8 }
-.total-money{ font-weight:700 }
-#btn-confirmar{ margin-left:auto; background:var(--primary); color:#fff; border:0; border-radius:12px; padding:10px 16px; cursor:pointer }
-#btn-confirmar:disabled{ opacity:.5; cursor:not-allowed }
-
-/* En ≥1200px: el resumen dentro del ancho de la 3ª columna */
-@media (min-width: 1200px){
-  #resumen{
-    display:grid; grid-template-columns: 1fr 1fr 1fr; column-gap:16px;
-  }
-  #resumen-list, #resumen .bar{
-    grid-column: 3;
-    max-width: 100%;
-  }
-}
-
-/* Sheet (modal) */
-#auth-sheet{
-  position:fixed; inset:0; background:rgba(0,0,0,.35);
-  display:flex; align-items:flex-end; justify-content:center; padding:16px;
-  z-index:2000;
-}
-.sheet{ width:100%; max-width:520px; background:#fff; border-radius:16px 16px 0 0; padding:16px; box-shadow:0 -6px 20px rgba(0,0,0,.15) }
-.field{ display:flex; flex-direction:column; gap:6px; margin:8px 0 }
-.row{ display:flex; gap:8px }
-@media (max-width: 520px){ .row{flex-direction:column} }
-input,textarea{ width:100%; padding:10px; border:1px solid #ddd; border-radius:10px; font-size:16px }
-textarea{ min-height:70px }
-.actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:8px }
-.btn{ border:0; border-radius:10px; padding:10px 14px; cursor:pointer }
-.btn.cancel{ background:#eee }
-.btn.primary{ background:var(--primary); color:#fff }
-.hidden{ display:none !important }
-
-/* Ticket / Comprobante */
-#ticket{
-  position:fixed; inset:0; background:rgba(0,0,0,.5);
-  display:flex; align-items:center; justify-content:center; padding:16px;
-  z-index:2500;
-}
-.ticket{ width:100%; max-width:560px; background:#fff; border-radius:16px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.25) }
-#ticket-content{
-  padding:16px; border:1px dashed #e0e0e0; border-radius:12px; background:#fafafa;
-}
-.tkt-head{ display:flex; gap:12px; align-items:center; margin-bottom:8px }
-#tkt-logo{ height:36px; display:none }
-.tkt-title h3{ margin:0; font-size:18px }
-.tkt-sub{ font-size:12px; color:#555 }
-.tkt-info{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin:8px 0 12px }
-.tkt-items{ display:flex; flex-direction:column; gap:8px; margin-bottom:12px }
-.tkt-row{ display:flex; justify-content:space-between; gap:10px; border-bottom:1px dashed #e8e8e8; padding-bottom:6px }
-.tkt-left{ font-size:14px }
-.tkt-right{ font-size:14px; font-weight:600 }
-.tkt-total{ display:flex; justify-content:space-between; gap:10px; font-size:16px; font-weight:700; margin-top:4px; }
-.tkt-note{ margin-top:10px; font-size:12px; color:#666 }
-.ticket-actions{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  justify-content:space-between;
-  margin-top:12px
-}
-
-/* Bloque cerrado */
-#closed{ max-width:860px; margin:40px auto; padding:20px; border:1px dashed #c8e6c9; border-radius:16px; background:#fafdf9 }
-#closed h2{ margin:0 0 8px; font-size:22px }
-#closed p{ margin:0 0 12px; color:#444 }
-
-/* Toast */
-#toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#222; color:#fff; padding:8px 12px; border-radius:10px; opacity:0; transition:opacity .2s; z-index:3000 }
-#toast.show{ opacity:1 }
-
-/* Ajustes finos muy chicas */
-@media (max-width: 360px){
-  .card{min-height: 200px}
-  .card-title{font-size:16px}
-  .qty button,.plus{padding:5px 9px;font-size:15px}
-  .plus{width:30px;height:30px}
-}
-
-/* =========================
-   Desktop split 30/70 (SOLO PC) — no toca mobile
-   ========================= */
-.sidehdr{ display:none; }
-.resumen-pane{ display:contents; } /* no altera el layout original */
-#conn-status-side{ margin-left:auto; font-size:12px; color:#666; }
-
-/* wrapper cuadrado para recorte central */
-.sidehdr-img{
-  width:100%;
-  aspect-ratio:1/1;
-  overflow:hidden;
-  background:#fff;
-}
-#header-img-side{
-  display:block;
-  width:100%;
-  height:100%;
-  object-fit:cover;       /* ✅ recorte */
-  object-position:center; /* ✅ central */
-}
-
-@media (min-width: 1024px) and (hover:hover) and (pointer:fine){
-  body{ overflow:hidden; }
-
-  /* El header "mobile" no se usa en desktop split */
-  .hdr{ display:none; }
-
-  /* App a pantalla completa, dividido 30/70 */
-  main#app{
-    position:fixed;
-    inset:0;
-    max-width:none;
-    margin:0;
-    padding:0;
-    display:grid;
-    grid-template-columns: 30% 70%;
-    background:var(--bg);
+  function fmtMoney(n) {
+    try { return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0); }
+    catch { return String(n); }
   }
 
-  /* Columna izquierda: 50% encabezado, 50% carrito */
-  #resumen{
-    grid-column: 1;
-    height:100%;
-    position:relative;
-    bottom:auto;
-    border-top:0;
-    border-right:1px solid #eee;
-    padding:0;
-    background:#fff;
+  // ---------- Fetch seguro (NO se cae si API devuelve HTML) ----------
+  async function fetchJsonSafe(url, opts = {}) {
+    const headers = Object.assign({}, opts.headers || {});
+    if (API_KEY) headers["X-API-Key"] = API_KEY;
 
-    display:grid !important;
-    grid-template-columns: 1fr !important;
-    grid-template-rows: 50% 50%;
-    overflow:hidden;
-  }
+    let res;
+    try {
+      res = await fetch(url, Object.assign({}, opts, { headers }));
+    } catch (e) {
+      throw new Error(`No se pudo conectar con la API (${url}).`);
+    }
 
-  /* Anula el modo "resumen en 3ra columna" */
-  #resumen-list, #resumen .bar{
-    grid-column:auto !important;
-  }
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const text = await res.text();
 
-  #resumen .sidehdr{
-    display:block;
-    overflow:hidden;
-    border-bottom:1px solid #eee;
-  }
+    let json = null;
+    if (ct.includes("application/json")) {
+      try { json = JSON.parse(text); } catch {}
+    }
 
-  /* Segunda mitad: lista con scroll + barra fija abajo */
-  #resumen .resumen-pane{
-    display:flex;
-    flex-direction:column;
-    overflow:hidden;
-    min-height:0;
-  }
+    if (!res.ok) {
+      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : `HTTP ${res.status}`;
+      const hint = ct.includes("application/json") ? "" : " (parece HTML/404/500)";
+      const err = new Error(`${msg}${hint}`);
+      err.status = res.status;
+      err.body = text;
+      err.json = json;
+      throw err;
+    }
 
-  #resumen-list{
-    padding:10px 16px;
-    margin:0;
-    overflow-y:auto;
-    flex:1 1 auto;
-    min-height:0;
+    if (!json) {
+      const err = new Error(`La API respondió algo que NO es JSON (revisar /api/pedidos).`);
+      err.status = res.status;
+      err.body = text;
+      throw err;
+    }
+
+    return json;
   }
 
-  #resumen .bar{
-    padding:10px 16px;
-    border-top:1px solid #eee;
-    background:#fff;
-    flex:0 0 auto;
+  // ---------- Helpers imágenes ----------
+  function normalizeImageUrl(u) {
+    if (!u) return "";
+    u = String(u).trim();
+    let m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+    if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
+    m = u.match(/drive\.google\.com\/open\?id=([^&]+)/);
+    if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
+    if (/drive\.google\.com\/uc\?/.test(u)) return u;
+    return u;
   }
 
-  /* Columna derecha: catálogo 2 columnas con scroll */
-  #catalogo{
-    grid-column: 2;
-    height:100%;
-    overflow-y:auto;
-    padding:16px;
-    min-width:0;
-    align-content:start;
+  function applyTheme() {
+    const t = state.config.THEME || {};
+    const root = document.documentElement;
+
+    if (t.PRIMARY) root.style.setProperty("--primary", t.PRIMARY);
+    if (t.SECONDARY) root.style.setProperty("--secondary", t.SECONDARY);
+    if (t.BG) root.style.setProperty("--bg", t.BG);
+    if (t.TEXT) root.style.setProperty("--text", t.TEXT);
+    if (t.RADIUS != null) root.style.setProperty("--radius", t.RADIUS + "px");
+    if (t.SPACING != null) root.style.setProperty("--space", t.SPACING + "px");
+
+    // ✅ evitar “imagen rota”
+    const headerUrl = state.config.ASSET_HEADER_URL ? String(state.config.ASSET_HEADER_URL).trim() : "";
+    if (els.headerImg) {
+      if (headerUrl) { els.headerImg.src = headerUrl; els.headerImg.style.display = "block"; }
+      else { els.headerImg.src = ""; els.headerImg.style.display = "none"; }
+    }
+    if (els.headerImgSide) {
+      if (headerUrl) { els.headerImgSide.src = headerUrl; els.headerImgSide.style.display = "block"; }
+      else { els.headerImgSide.src = ""; els.headerImgSide.style.display = "none"; }
+    }
+
+    if (els.tktLogo) {
+      const logoUrl = state.config.ASSET_LOGO_URL ? String(state.config.ASSET_LOGO_URL).trim() : "";
+      if (logoUrl) {
+        els.tktLogo.crossOrigin = "anonymous";
+        els.tktLogo.referrerPolicy = "no-referrer";
+        els.tktLogo.src = logoUrl;
+        els.tktLogo.style.display = "block";
+      } else {
+        els.tktLogo.src = "";
+        els.tktLogo.style.display = "none";
+      }
+    }
   }
 
-  #catalogo.grid{
-    grid-template-columns: repeat(2, 1fr) !important;
+  // ---------- UI catálogo ----------
+  function buildControls(v, current) {
+    const frag = document.createDocumentFragment();
+    if (current === 0) {
+      const plus = document.createElement("button");
+      plus.className = "plus";
+      plus.textContent = "+";
+      plus.addEventListener("click", () => updateQty(v, 1));
+      frag.appendChild(plus);
+    } else {
+      const pill = document.createElement("div");
+      pill.className = "qty";
+      const minusBtn = document.createElement("button"); minusBtn.textContent = "–";
+      const n = document.createElement("span"); n.className = "n"; n.textContent = current;
+      const plusBtn = document.createElement("button"); plusBtn.textContent = "+";
+      minusBtn.addEventListener("click", () => updateQty(v, current - 1));
+      plusBtn.addEventListener("click", () => updateQty(v, current + 1));
+      pill.append(minusBtn, n, plusBtn);
+      frag.appendChild(pill);
+    }
+    return frag;
   }
 
-  /* ✅ FIX ancho extremo: la foto no puede crecer infinito */
-  .card{
-    grid-template-columns: clamp(200px, 35%, 260px) 1fr;
-  }
-}
+  function buildCard(v) {
+    const card = document.createElement("article");
+    card.className = "card";
+    card.dataset.id = v.IdVianda;
 
-/* ✅ Ultra-wide: 3 columnas en catálogo dentro del split */
-@media (min-width: 1500px) and (hover:hover) and (pointer:fine){
-  #catalogo.grid{
-    grid-template-columns: repeat(3, 1fr) !important;
+    const imgBox = document.createElement("div");
+    imgBox.className = "card-img";
+    const img = document.createElement("img");
+    img.alt = v.Nombre; img.loading = "lazy"; img.decoding = "async";
+
+    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL ||
+      (window.location.origin + "/assets/placeholder.png");
+
+    const srcNorm = normalizeImageUrl(v.Imagen);
+    img.src = placeholder;
+    if (srcNorm) img.src = srcNorm;
+
+    imgBox.appendChild(img);
+
+    const body = document.createElement("div");
+    body.className = "card-body";
+
+    const title = document.createElement("h3");
+    title.className = "card-title";
+    title.textContent = v.Nombre;
+
+    const desc = document.createElement("div");
+    desc.className = "card-desc";
+    desc.textContent = v.Descripcion || "";
+
+    const bottom = document.createElement("div");
+    bottom.className = "card-bottom";
+
+    const price = document.createElement("div");
+    price.className = "card-price";
+    price.textContent = "$ " + fmtMoney(v.Precio);
+
+    const controlsBox = document.createElement("div");
+    const current = state.cart.get(v.IdVianda)?.cantidad || 0;
+    controlsBox.appendChild(buildControls(v, current));
+
+    bottom.append(price, controlsBox);
+    body.append(title, desc, bottom);
+    card.append(imgBox, body);
+    return card;
   }
-  .card{
-    grid-template-columns: clamp(180px, 34%, 230px) 1fr;
+
+  function renderCatalogo() {
+    els.catalogo.innerHTML = "";
+    if (!state.catalogo.length) {
+      const empty = document.createElement("div");
+      empty.textContent = state.config.MSG_EMPTY || "No hay viandas disponibles por ahora.";
+      empty.className = "card";
+      els.catalogo.appendChild(empty);
+      return;
+    }
+    for (const v of state.catalogo) els.catalogo.appendChild(buildCard(v));
   }
-}
+
+  function renderResumen() {
+    els.resumenList.innerHTML = "";
+    let total = 0;
+    const items = Array.from(state.cart.values());
+    items.forEach(it => total += (it.precio * it.cantidad));
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "resumen-empty";
+      empty.textContent = "Carrito vacío";
+      els.resumenList.appendChild(empty);
+    } else {
+      const max = state.config.UI_RESUMEN_ITEMS_VISIBLES || 4;
+      items.slice(0, max).forEach(it => {
+        const row = document.createElement("div");
+        row.className = "resumen-item";
+        const left = document.createElement("div");
+        left.className = "resumen-left";
+        left.textContent = `${it.cantidad}× ${it.nombre}`;
+        const right = document.createElement("div");
+        right.className = "resumen-right";
+        right.textContent = "$ " + fmtMoney(it.precio * it.cantidad);
+        row.append(left, right);
+        els.resumenList.appendChild(row);
+      });
+    }
+
+    els.resumenTotal.textContent = "$ " + fmtMoney(total);
+    els.btnConfirmar.disabled = total <= 0;
+  }
+
+  function patchCardControls(id, v, n) {
+    const card = els.catalogo.querySelector(`[data-id="${id}"]`);
+    if (!card) return;
+    const bottom = card.querySelector(".card-bottom");
+    if (!bottom) return;
+    const newControls = buildControls(v, n);
+    const oldControls = bottom.lastElementChild;
+    if (oldControls) bottom.replaceChild(newControls, oldControls);
+    else bottom.appendChild(newControls);
+  }
+
+  function updateQty(v, n) {
+    const max = Number(state.config.UI_MAX_QTY_POR_VIANDA || 9);
+    if (n < 0) n = 0;
+    if (n > max) { toast(state.config.MSG_LIMIT || "Máximo 9 por vianda."); n = max; }
+
+    if (n === 0) state.cart.delete(v.IdVianda);
+    else state.cart.set(v.IdVianda, { id: v.IdVianda, nombre: v.Nombre, precio: Number(v.Precio), cantidad: n });
+
+    patchCardControls(v.IdVianda, v, n);
+    renderResumen();
+  }
+
+  // ---------- Cargar config / catálogo ----------
+  async function loadConfig() {
+    setStatus("Obteniendo configuración…");
+
+    const conf = await fetchJsonSafe(`${API}?route=ui-config`);
+    state.config = {
+      THEME: {
+        PRIMARY: conf.THEME_PRIMARY,
+        SECONDARY: conf.THEME_SECONDARY,
+        BG: conf.THEME_BG,
+        TEXT: conf.THEME_TEXT,
+        RADIUS: Number(conf.RADIUS || 16),
+        SPACING: Number(conf.SPACING || 8),
+      },
+      ASSET_HEADER_URL: conf.ASSET_HEADER_URL || "",
+      ASSET_LOGO_URL: conf.ASSET_LOGO_URL || "",
+      ASSET_PLACEHOLDER_IMG_URL: conf.ASSET_PLACEHOLDER_IMG_URL || "",
+      FORM_ENABLED: String(conf.FORM_ENABLED || "true").toLowerCase() === "true",
+      FORM_CLOSED_TITLE: conf.FORM_CLOSED_TITLE,
+      FORM_CLOSED_MESSAGE: conf.FORM_CLOSED_MESSAGE,
+      UI_RESUMEN_ITEMS_VISIBLES: Number(conf.UI_RESUMEN_ITEMS_VISIBLES || 4),
+      UI_MAX_QTY_POR_VIANDA: Number(conf.UI_MAX_QTY_POR_VIANDA || 9),
+      MSG_EMPTY: conf.MSG_EMPTY,
+      MSG_AUTH_FAIL: conf.MSG_AUTH_FAIL,
+      MSG_LIMIT: conf.MSG_LIMIT,
+      MSG_SERVER_FAIL: conf.MSG_SERVER_FAIL,
+      MSG_SUCCESS: conf.MSG_SUCCESS,
+      WA_ENABLED: String(conf.WA_ENABLED || "true").toLowerCase() === "true",
+      WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
+      PAY_ALIAS: conf.PAY_ALIAS || "",
+      PAY_NOTE: conf.PAY_NOTE || "",
+    };
+
+    applyTheme();
+
+    if (!state.config.FORM_ENABLED) {
+      els.app.classList.add("hidden");
+      els.closed.classList.remove("hidden");
+      els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
+      els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp.";
+      setStatus("Formulario cerrado");
+      return false;
+    }
+
+    els.closed.classList.add("hidden");
+    els.app.classList.remove("hidden");
+    setStatus("Configuración cargada ✓");
+    return true;
+  }
+
+  async function loadCatalogo() {
+    setStatus("Cargando catálogo…");
+    const data = await fetchJsonSafe(`${API}?route=viandas`);
+    state.catalogo = Array.isArray(data.items) ? data.items.slice() : [];
+    renderCatalogo();
+    setStatus("Catálogo actualizado ✓");
+  }
+
+  // ---------- Botones / modales (mínimo, para que no explote) ----------
+  function openSheet() { els.sheet.classList.remove("hidden"); }
+  function closeSheet() { els.sheet.classList.add("hidden"); }
+  function closeTicket() { els.tkt.classList.add("hidden"); }
+
+  if (els.btnConfirmar) els.btnConfirmar.addEventListener("click", openSheet);
+  if (els.btnCancelar) els.btnCancelar.addEventListener("click", closeSheet);
+  if (els.tktClose) els.tktClose.addEventListener("click", closeTicket);
+  if (els.sheet) els.sheet.addEventListener("click", (e) => { if (e.target === els.sheet) closeSheet(); });
+  if (els.tkt) els.tkt.addEventListener("click", (e) => { if (e.target === els.tkt) closeTicket(); });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (els.tkt && !els.tkt.classList.contains("hidden")) closeTicket();
+    if (els.sheet && !els.sheet.classList.contains("hidden")) closeSheet();
+  });
+
+  // ---------- Boot (con manejo de errores visible) ----------
+  (async function boot() {
+    try {
+      // si config.js no cargó, esto te lo deja claro
+      if (!window.APP_CONFIG) {
+        console.warn("APP_CONFIG no está definido: /config.js no cargó o está mal.");
+      }
+
+      const ok = await loadConfig();
+      if (!ok) return;
+
+      await loadCatalogo();
+      renderResumen();
+    } catch (e) {
+      console.error("BOOT ERROR:", e);
+      setStatus(`ERROR: ${e.message || "falló la carga"}`);
+      toast(`No cargó: ${e.message || "revisar API"}`, true);
+    }
+  })();
+})();
