@@ -1,4 +1,4 @@
-// /api/pedidos.js — Vercel Serverless
+// /api/pedidos.js
 import { google } from "googleapis";
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -16,6 +16,9 @@ const SHEET_VIANDAS = "Viandas";
 const SHEET_CLIENTES = "Clientes";
 const SHEET_PEDIDOS = "Pedidos";
 const SHEET_CONFIG = "Configuracion";
+
+// ✅ ahora el contador vive en K1 (porque insertaste una columna G)
+const LAST_ID_CELL = `${SHEET_PEDIDOS}!K1`;
 
 const UP_URL = (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/+$/, "");
 const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
@@ -63,6 +66,9 @@ async function readConfigKV() {
   } catch {
     return {};
   }
+}
+function isFormEnabled(kv) {
+  return String(kv?.FORM_ENABLED ?? "true").trim().toLowerCase() === "true";
 }
 
 // ---------- Helpers ----------
@@ -117,6 +123,14 @@ function toNumOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeFormaPago(v) {
+  const s = normStr(v);
+  if (s === "efectivo") return "Efectivo";
+  if (s === "transferencia") return "Transferencia";
+  // fallback razonable
+  return "Transferencia";
+}
+
 // ---------- Upstash ----------
 const hasUpstash = () => !!(UP_URL && UP_TOKEN);
 
@@ -134,81 +148,50 @@ async function upCall(cmd, ...parts) {
 async function upGet(key) { return upCall("get", key); }
 async function upSet(key, value) { return upCall("set", key, value); }
 async function upIncr(key) { return upCall("incr", key); }
-async function upDel(key) { return upCall("del", key); }
-async function upTtl(key) { return upCall("ttl", key); }
-async function upExpire(key, sec) { return upCall("expire", key, sec); }
-async function upSetEx(key, sec, value) { return upCall("setex", key, sec, value); }
 
-// ---------- Rate limit (Upstash) ----------
+// ---------- Rate limit (opcional si hay Upstash) ----------
 const RL_DNI_FAILS = 5;
 const RL_DNI_WINDOW_SEC = 10 * 60;
 const RL_DNI_BLOCK_SEC = 15 * 60;
 
-const RL_IP_FAILS = 25;
-const RL_IP_WINDOW_SEC = 10 * 60;
-const RL_IP_BLOCK_SEC = 15 * 60;
+function rlKeyBlockDni(dni){ return `rl:ped:block:dni:${dni}`; }
+function rlKeyFailDni(dni){ return `rl:ped:fail:dni:${dni}`; }
 
-function rlKeys(dni, ip) {
-  return {
-    dniFail: `rl:ped:fail:dni:${dni}`,
-    dniBlock: `rl:ped:block:dni:${dni}`,
-    ipFail: `rl:ped:fail:ip:${ip}`,
-    ipBlock: `rl:ped:block:ip:${ip}`,
-  };
+async function upTtl(key){ return upCall("ttl", key); }
+async function upExpire(key, sec){ return upCall("expire", key, sec); }
+async function upSetEx(key, sec, value){ return upCall("setex", key, sec, value); }
+async function upDel(key){ return upCall("del", key); }
+
+async function checkBlockedDni(dni){
+  if (!hasUpstash()) return { blocked:false };
+  const k = rlKeyBlockDni(dni);
+  const v = await upGet(k);
+  if (v == null) return { blocked:false };
+  let ttl = Number(await upTtl(k));
+  if (!Number.isFinite(ttl) || ttl < 1) ttl = RL_DNI_BLOCK_SEC;
+  return { blocked:true, retryAfterSeconds: ttl };
 }
-
-async function checkBlocked(dni, ip) {
-  if (!hasUpstash()) return { blocked: false };
-
-  const k = rlKeys(dni, ip);
-  const [bDni, bIp] = await Promise.all([upGet(k.dniBlock), ip ? upGet(k.ipBlock) : null]);
-
-  if (bDni != null) {
-    let ttl = Number(await upTtl(k.dniBlock));
-    if (!Number.isFinite(ttl) || ttl < 1) ttl = RL_DNI_BLOCK_SEC;
-    return { blocked: true, retryAfterSeconds: ttl, scope: "dni" };
-  }
-  if (ip && bIp != null) {
-    let ttl = Number(await upTtl(k.ipBlock));
-    if (!Number.isFinite(ttl) || ttl < 1) ttl = RL_IP_BLOCK_SEC;
-    return { blocked: true, retryAfterSeconds: ttl, scope: "ip" };
-  }
-  return { blocked: false };
-}
-
-async function registerFail(dni, ip) {
+async function registerFailDni(dni){
   if (!hasUpstash()) return;
-  const k = rlKeys(dni, ip);
-
-  const n = Number(await upIncr(k.dniFail));
-  await upExpire(k.dniFail, RL_DNI_WINDOW_SEC);
+  const kFail = rlKeyFailDni(dni);
+  const n = Number(await upIncr(kFail));
+  await upExpire(kFail, RL_DNI_WINDOW_SEC);
   if (n >= RL_DNI_FAILS) {
-    await upSetEx(k.dniBlock, RL_DNI_BLOCK_SEC, "1");
-    await upDel(k.dniFail);
-  }
-
-  if (ip) {
-    const m = Number(await upIncr(k.ipFail));
-    await upExpire(k.ipFail, RL_IP_WINDOW_SEC);
-    if (m >= RL_IP_FAILS) {
-      await upSetEx(k.ipBlock, RL_IP_BLOCK_SEC, "1");
-      await upDel(k.ipFail);
-    }
+    await upSetEx(rlKeyBlockDni(dni), RL_DNI_BLOCK_SEC, "1");
+    await upDel(kFail);
   }
 }
-
-async function clearFails(dni, ip) {
+async function clearFailDni(dni){
   if (!hasUpstash()) return;
-  const k = rlKeys(dni, ip);
-  await Promise.all([upDel(k.dniFail), ip ? upDel(k.ipFail) : Promise.resolve()]);
+  await upDel(rlKeyFailDni(dni));
 }
 
-// ---------- IdPedido con fallback J1 ----------
-async function readPedidosJ1() {
+// ---------- IdPedido con fallback K1 ----------
+async function readLastIdCell() {
   try {
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_PEDIDOS}!J1`,
+      range: LAST_ID_CELL,
     });
     const v = r.data.values?.[0]?.[0];
     const n = Number(String(v ?? "").trim());
@@ -218,11 +201,11 @@ async function readPedidosJ1() {
   }
 }
 
-async function updatePedidosJ1(lastId) {
+async function updateLastIdCell(lastId) {
   try {
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_PEDIDOS}!J1`,
+      range: LAST_ID_CELL,
       valueInputOption: "RAW",
       requestBody: { values: [[String(lastId)]] },
     });
@@ -255,36 +238,30 @@ async function getNextIdPedido() {
 
   if (hasUpstash()) {
     let current = await upGet(key);
-
     if (current == null) {
-      // Inicializar desde hoja/J1 si es la primera vez
-      const j1 = await readPedidosJ1();
       const lastSheet = await readLastIdFromSheetA();
+      const k1 = await readLastIdCell();
       const base = Number.isFinite(lastSheet)
         ? lastSheet
-        : Number.isFinite(j1)
-          ? j1
+        : Number.isFinite(k1)
+          ? k1
           : (MIN_START_ID - 1);
-
       await upSet(key, String(base));
     }
-
     let n = Number(await upIncr(key));
-
     if (!Number.isFinite(n) || n < MIN_START_ID) {
       await upSet(key, String(MIN_START_ID - 1));
       n = Number(await upIncr(key));
     }
-
     return n;
   }
 
-  // Sin Upstash: si hay registros, último + 1; si está vacío, J1 + 1
+  // sin Upstash
   const lastSheet = await readLastIdFromSheetA();
   if (Number.isFinite(lastSheet)) return lastSheet + 1;
 
-  const j1 = await readPedidosJ1();
-  if (Number.isFinite(j1)) return j1 + 1;
+  const k1 = await readLastIdCell();
+  if (Number.isFinite(k1)) return k1 + 1;
 
   return MIN_START_ID;
 }
@@ -376,6 +353,12 @@ export default async function handler(req, res) {
 
   // POST pedido
   if (req.method === "POST" && route === "pedido") {
+    // ✅ corte definitivo: si lo cerraste en la planilla, NO entra ningún pedido
+    const kv = await readConfigKV();
+    if (!isFormEnabled(kv)) {
+      return err(res, 403, "FORM_CLOSED");
+    }
+
     const MAX_COMENT = 400, MAX_IP = 128, MAX_UA = 256;
 
     const body = req.body || {};
@@ -389,16 +372,16 @@ export default async function handler(req, res) {
     let comentarios = (body.comentarios ?? "").toString();
     comentarios = comentarios.replace(/\s+/g, " ").trim().slice(0, MAX_COMENT);
 
-    const items = Array.isArray(body.items) ? body.items : [];
+    const formaPago = normalizeFormaPago(body.formaPago);
 
+    const items = Array.isArray(body.items) ? body.items : [];
     if (!/^\d{8}$/.test(dni) || dni.startsWith("0") || !clave || !items.length) {
       return err(res, 400, "BAD_REQUEST");
     }
 
-    // rate limit
-    const blk = await checkBlocked(dni, ip);
+    const blk = await checkBlockedDni(dni);
     if (blk.blocked) {
-      return err(res, 429, "RATE_LIMIT", { retryAfterSeconds: blk.retryAfterSeconds, scope: blk.scope });
+      return err(res, 429, "RATE_LIMIT", { retryAfterSeconds: blk.retryAfterSeconds });
     }
 
     // validar cliente por encabezados
@@ -420,15 +403,14 @@ export default async function handler(req, res) {
     const match = rowsC.find((r) => normDni(r?.[iDNI]) === dni);
     const claveSheet = match ? String(match[iClave] ?? "").trim() : "";
     const estadoSheet = match && iEstado >= 0 ? String(match[iEstado] ?? "") : "";
-
     const okEstado = (iEstado < 0) ? true : isValidadoStrict(estadoSheet);
 
     if (!match || claveSheet !== clave || !okEstado) {
-      await registerFail(dni, ip);
+      await registerFailDni(dni);
       return err(res, 401, "AUTH_FAIL");
     }
 
-    await clearFails(dni, ip);
+    await clearFailDni(dni);
 
     // mapa precios desde viandas
     const rv = await sheets.spreadsheets.values.get({
@@ -461,16 +443,18 @@ export default async function handler(req, res) {
       const subtotal = v.precio * qty;
       total += subtotal;
 
+      // ✅ A:J con FormaPago en G
       toAppend.push([
         idPedido,                 // A IdPedido
         String(dni),              // B DNI
-        v.nombre,                 // C Nombre
+        v.nombre,                 // C Vianda
         qty,                      // D Cantidad
         comentarios,              // E Comentarios
-        subtotal,                 // F Subtotal
-        new Date().toISOString(), // G Timestamp
-        ip,                       // H IP
-        ua,                       // I UA
+        subtotal,                 // F Precio/Subtotal
+        formaPago,                // G FormaPago
+        new Date().toISOString(), // H TimeStamp
+        ip,                       // I IP
+        ua,                       // J UserAgent
       ]);
     }
 
@@ -478,15 +462,14 @@ export default async function handler(req, res) {
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_PEDIDOS}!A:I`,
+      range: `${SHEET_PEDIDOS}!A:J`,
       valueInputOption: "RAW",
       requestBody: { values: toAppend },
     });
 
-    // ✅ Guardamos el último ID en J1 automáticamente
-    await updatePedidosJ1(idPedido);
+    await updateLastIdCell(idPedido);
 
-    return ok(res, { idPedido, total });
+    return ok(res, { idPedido, total, formaPago });
   }
 
   return err(res, 404, "ROUTE_NOT_FOUND");
