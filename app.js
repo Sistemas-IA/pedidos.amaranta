@@ -129,9 +129,8 @@
   // -------- WA helper (cerrado) --------
   function openWhatsApp(msg){
     const raw = String(state.config.WA_PHONE_TARGET || "").trim();
-    const phone = raw.replace(/[^\d]/g, ""); // deja solo números
+    const phone = raw.replace(/[^\d]/g, "");
     if (!phone) return;
-
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
     window.open(url, "_blank");
   }
@@ -169,6 +168,7 @@
 
     const imgBox = document.createElement("div");
     imgBox.className = "card-img";
+
     const img = document.createElement("img");
     img.alt = v.Nombre;
     img.loading = "lazy";
@@ -314,7 +314,7 @@
       els.tktItems.appendChild(row);
     });
 
-    // ✅ TOTAL del backend (no del front)
+    // ✅ TOTAL del backend
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
 
     els.tkt.classList.remove("hidden");
@@ -381,8 +381,6 @@
       });
 
       const id = data.idPedido;
-
-      // ✅ total real del servidor
       const totalServer = Number(data.total);
       const total = Number.isFinite(totalServer)
         ? totalServer
@@ -451,7 +449,6 @@
       els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp.";
       setStatus("Formulario cerrado");
 
-      // ✅ Botón WhatsApp (salida)
       const canWA = state.config.WA_ENABLED && String(state.config.WA_PHONE_TARGET || "").trim();
       if (canWA) {
         els.closedWA.classList.remove("hidden");
