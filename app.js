@@ -28,7 +28,6 @@
     tkt: document.getElementById("ticket"),
     tktContent: document.getElementById("ticket-content"),
     tktLogo: document.getElementById("tkt-logo"),
-    tktSub: document.getElementById("tkt-sub"),
     tktId: document.getElementById("tkt-id"),
     tktDate: document.getElementById("tkt-date"),
     tktAlias: document.getElementById("tkt-alias"),
@@ -43,11 +42,9 @@
     config: {},
     catalogo: [],
     cart: new Map(),
-    ip: null,
     lastSendAt: 0,
   };
 
-  /* ===== Fetch seguro (si API devuelve HTML/500 no revienta todo) ===== */
   async function fetchJsonSafe(url, opts = {}) {
     const headers = Object.assign({}, opts.headers || {});
     if (API_KEY) headers["X-API-Key"] = API_KEY;
@@ -60,17 +57,11 @@
     if (ct.includes("application/json")) {
       try { json = JSON.parse(text); } catch {}
     }
-
     if (!res.ok) {
       const msg = (json && (json.error || json.message)) ? (json.error || json.message) : `HTTP ${res.status}`;
       const hint = ct.includes("application/json") ? "" : " (parece HTML/404/500)";
-      const err = new Error(`${msg}${hint}`);
-      err.status = res.status;
-      err.body = text;
-      err.json = json;
-      throw err;
+      throw new Error(`${msg}${hint}`);
     }
-
     if (!json) throw new Error("La API respondió algo que NO es JSON.");
     return json;
   }
@@ -79,19 +70,16 @@
     if (els.status) els.status.textContent = msg;
     if (els.statusSide) els.statusSide.textContent = msg;
   }
-
   function toast(msg, hold=false){
     if (!els.toast) return;
     els.toast.textContent = msg;
     els.toast.classList.add("show");
     if (!hold) setTimeout(() => els.toast.classList.remove("show"), 2200);
   }
-
   function fmtMoney(n){
     try { return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0); }
     catch { return String(n); }
   }
-
   function normalizeImageUrl(u){
     if (!u) return "";
     u = String(u).trim();
@@ -138,10 +126,19 @@
     }
   }
 
-  /* ===== Catálogo / carrito ===== */
+  // -------- WA helper (cerrado) --------
+  function openWhatsApp(msg){
+    const raw = String(state.config.WA_PHONE_TARGET || "").trim();
+    const phone = raw.replace(/[^\d]/g, ""); // deja solo números
+    if (!phone) return;
+
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    window.open(url, "_blank");
+  }
+
+  // -------- Catálogo / carrito --------
   function buildControls(v, current){
     const frag = document.createDocumentFragment();
-
     if (current === 0) {
       const plus = document.createElement("button");
       plus.className = "plus";
@@ -150,19 +147,12 @@
       frag.appendChild(plus);
       return frag;
     }
-
     const pill = document.createElement("div");
     pill.className = "qty";
 
-    const minusBtn = document.createElement("button");
-    minusBtn.textContent = "–";
-
-    const n = document.createElement("span");
-    n.className = "n";
-    n.textContent = current;
-
-    const plusBtn = document.createElement("button");
-    plusBtn.textContent = "+";
+    const minusBtn = document.createElement("button"); minusBtn.textContent = "–";
+    const n = document.createElement("span"); n.className = "n"; n.textContent = current;
+    const plusBtn = document.createElement("button"); plusBtn.textContent = "+";
 
     minusBtn.addEventListener("click", () => updateQty(v, current - 1));
     plusBtn.addEventListener("click", () => updateQty(v, current + 1));
@@ -179,19 +169,15 @@
 
     const imgBox = document.createElement("div");
     imgBox.className = "card-img";
-
     const img = document.createElement("img");
     img.alt = v.Nombre;
     img.loading = "lazy";
     img.decoding = "async";
 
-    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL ||
-      (window.location.origin + "/assets/placeholder.png");
-
+    const placeholder = state.config.ASSET_PLACEHOLDER_IMG_URL || (window.location.origin + "/assets/placeholder.png");
     const src = normalizeImageUrl(v.Imagen);
     img.src = src || placeholder;
     img.onerror = () => { img.src = placeholder; };
-
     imgBox.appendChild(img);
 
     const body = document.createElement("div");
@@ -291,12 +277,11 @@
     renderResumen();
   }
 
-  /* ===== Modales ===== */
+  // -------- Modales --------
   function openSheet(){ els.sheet.classList.remove("hidden"); }
   function closeSheet(){ els.sheet.classList.add("hidden"); }
   function closeTicket(){ els.tkt.classList.add("hidden"); }
 
-  /* ===== Ticket ===== */
   async function waitForHtml2Canvas(){
     const start = Date.now();
     while (!window.html2canvas) {
@@ -329,10 +314,10 @@
       els.tktItems.appendChild(row);
     });
 
+    // ✅ TOTAL del backend (no del front)
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
 
     els.tkt.classList.remove("hidden");
-
     if (els.tktClose) els.tktClose.onclick = closeTicket;
 
     els.tktSave.onclick = async () => {
@@ -365,7 +350,6 @@
     };
   }
 
-  /* ===== Envío (queda como estaba; si tu API valida, esto funciona) ===== */
   async function enviarPedido(){
     const dni = els.dni.value.trim();
     const clave = els.clave.value.trim();
@@ -385,6 +369,7 @@
 
     try {
       const payloadItems = cartItems.map(it => ({ idVianda: it.id, nombre: it.nombre, cantidad: it.cantidad }));
+
       const data = await fetchJsonSafe(`${API}?route=pedido`, {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
@@ -396,7 +381,12 @@
       });
 
       const id = data.idPedido;
-      let total = 0; cartItems.forEach(it => total += it.precio * it.cantidad);
+
+      // ✅ total real del servidor
+      const totalServer = Number(data.total);
+      const total = Number.isFinite(totalServer)
+        ? totalServer
+        : cartItems.reduce((acc, it) => acc + it.precio * it.cantidad, 0);
 
       const order = {
         idPedido: id,
@@ -420,7 +410,6 @@
     }
   }
 
-  /* ===== Load config + catálogo ===== */
   async function loadConfig(){
     setStatus("Obteniendo configuración…");
     const conf = await fetchJsonSafe(`${API}?route=ui-config`);
@@ -447,6 +436,7 @@
       MSG_LIMIT: conf.MSG_LIMIT,
       MSG_SERVER_FAIL: conf.MSG_SERVER_FAIL,
       WA_ENABLED: String(conf.WA_ENABLED || "true").toLowerCase() === "true",
+      WA_TEMPLATE: conf.WA_TEMPLATE || "",
       WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
       PAY_ALIAS: conf.PAY_ALIAS || "",
       PAY_NOTE: conf.PAY_NOTE || "",
@@ -460,6 +450,20 @@
       els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
       els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp.";
       setStatus("Formulario cerrado");
+
+      // ✅ Botón WhatsApp (salida)
+      const canWA = state.config.WA_ENABLED && String(state.config.WA_PHONE_TARGET || "").trim();
+      if (canWA) {
+        els.closedWA.classList.remove("hidden");
+        els.closedWA.onclick = () => {
+          const msg = `${els.closedTitle.textContent}\n${els.closedMsg.textContent}`;
+          openWhatsApp(msg);
+        };
+      } else {
+        els.closedWA.classList.add("hidden");
+        els.closedWA.onclick = null;
+      }
+
       return false;
     }
 
@@ -474,7 +478,7 @@
     const data = await fetchJsonSafe(`${API}?route=viandas`);
     state.catalogo = Array.isArray(data.items) ? data.items.slice() : [];
 
-    // Orden por columna G (Orden) si viene
+    // Orden por columna G (Orden)
     const toNum = (v) => {
       const s = String(v ?? "").trim().replace(",", ".");
       if (!s) return null;
@@ -494,23 +498,21 @@
     setStatus("Catálogo actualizado ✓");
   }
 
-  /* ===== Events ===== */
+  // Events
   els.btnConfirmar.addEventListener("click", openSheet);
   els.btnCancelar.addEventListener("click", closeSheet);
   els.btnEnviar.addEventListener("click", enviarPedido);
 
-  // click fuera para cerrar sheet/ticket
   els.sheet.addEventListener("click", (e) => { if (e.target === els.sheet) closeSheet(); });
   els.tkt.addEventListener("click", (e) => { if (e.target === els.tkt) closeTicket(); });
 
-  // ESC para cerrar
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (!els.tkt.classList.contains("hidden")) closeTicket();
     if (!els.sheet.classList.contains("hidden")) closeSheet();
   });
 
-  /* ===== Boot ===== */
+  // Boot
   (async function boot(){
     try {
       const ok = await loadConfig();
