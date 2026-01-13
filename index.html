@@ -63,6 +63,23 @@
           <input id="clave" type="password" autocomplete="current-password" placeholder="Tu clave" />
         </div>
       </div>
+
+      <!-- ✅ NUEVO: selector Forma de pago -->
+      <div class="field" id="forma-pago-field">
+        <label>Forma de pago</label>
+        <div class="row" style="gap:14px; align-items:center; flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" id="fp_transf" name="formaPago" value="transferencia" checked>
+            Transferencia
+          </label>
+
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" id="fp_efectivo" name="formaPago" value="efectivo">
+            Efectivo
+          </label>
+        </div>
+      </div>
+
       <div class="field">
         <label for="comentarios">Comentarios</label>
         <textarea id="comentarios" placeholder="Ej: sin sal, entregar 13:30"></textarea>
