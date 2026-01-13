@@ -24,6 +24,9 @@
     closedMsg: document.getElementById("closed-msg"),
     closedWA: document.getElementById("closed-wa"),
     app: document.getElementById("app"),
+    // FormaPago (radio)
+    fpTransf: document.getElementById("fp_transf"),
+    fpEfect: document.getElementById("fp_efectivo"),
     // Ticket
     tkt: document.getElementById("ticket"),
     tktContent: document.getElementById("ticket-content"),
@@ -40,6 +43,7 @@
 
   const state = {
     config: {},
+    formEnabled: true,
     catalogo: [],
     cart: new Map(),
     lastSendAt: 0,
@@ -57,12 +61,23 @@
     if (ct.includes("application/json")) {
       try { json = JSON.parse(text); } catch {}
     }
+
     if (!res.ok) {
-      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : `HTTP ${res.status}`;
+      const code = json?.error || `HTTP_${res.status}`;
+      const msg = json?.message || json?.error || `HTTP ${res.status}`;
       const hint = ct.includes("application/json") ? "" : " (parece HTML/404/500)";
-      throw new Error(`${msg}${hint}`);
+      const e = new Error(`${msg}${hint}`);
+      e.code = code;
+      e.status = res.status;
+      throw e;
     }
-    if (!json) throw new Error("La API respondió algo que NO es JSON.");
+
+    if (!json) {
+      const e = new Error("La API respondió algo que NO es JSON.");
+      e.code = "BAD_RESPONSE";
+      throw e;
+    }
+
     return json;
   }
 
@@ -126,13 +141,105 @@
     }
   }
 
-  // -------- WA helper (cerrado) --------
   function openWhatsApp(msg){
     const raw = String(state.config.WA_PHONE_TARGET || "").trim();
     const phone = raw.replace(/[^\d]/g, "");
     if (!phone) return;
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
     window.open(url, "_blank");
+  }
+
+  function setClosedUI(isClosed){
+    if (isClosed) {
+      state.formEnabled = false;
+      els.app.classList.add("hidden");
+      els.closed.classList.remove("hidden");
+      els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
+      els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp.";
+      setStatus("Formulario cerrado");
+
+      const canWA = state.config.WA_ENABLED && String(state.config.WA_PHONE_TARGET || "").trim();
+      if (canWA) {
+        els.closedWA.classList.remove("hidden");
+        els.closedWA.onclick = () => {
+          const msg = `${els.closedTitle.textContent}\n${els.closedMsg.textContent}`;
+          openWhatsApp(msg);
+        };
+      } else {
+        els.closedWA.classList.add("hidden");
+        els.closedWA.onclick = null;
+      }
+
+      // si se cerró mientras estaban operando, limpiamos todo
+      resetAfterSend(true);
+    } else {
+      state.formEnabled = true;
+      els.closed.classList.add("hidden");
+      els.app.classList.remove("hidden");
+    }
+  }
+
+  async function refreshConfigOnly(){
+    const conf = await fetchJsonSafe(`${API}?route=ui-config`);
+    state.config = {
+      THEME: {
+        PRIMARY: conf.THEME_PRIMARY,
+        SECONDARY: conf.THEME_SECONDARY,
+        BG: conf.THEME_BG,
+        TEXT: conf.THEME_TEXT,
+        RADIUS: Number(conf.RADIUS || 16),
+        SPACING: Number(conf.SPACING || 8),
+      },
+      ASSET_HEADER_URL: conf.ASSET_HEADER_URL || "",
+      ASSET_LOGO_URL: conf.ASSET_LOGO_URL || "",
+      ASSET_PLACEHOLDER_IMG_URL: conf.ASSET_PLACEHOLDER_IMG_URL || "",
+      FORM_ENABLED: String(conf.FORM_ENABLED || "true").toLowerCase() === "true",
+      FORM_CLOSED_TITLE: conf.FORM_CLOSED_TITLE,
+      FORM_CLOSED_MESSAGE: conf.FORM_CLOSED_MESSAGE,
+      UI_RESUMEN_ITEMS_VISIBLES: Number(conf.UI_RESUMEN_ITEMS_VISIBLES || 4),
+      UI_MAX_QTY_POR_VIANDA: Number(conf.UI_MAX_QTY_POR_VIANDA || 9),
+      MSG_EMPTY: conf.MSG_EMPTY,
+      MSG_AUTH_FAIL: conf.MSG_AUTH_FAIL,
+      MSG_LIMIT: conf.MSG_LIMIT,
+      MSG_SERVER_FAIL: conf.MSG_SERVER_FAIL,
+      WA_ENABLED: String(conf.WA_ENABLED || "true").toLowerCase() === "true",
+      WA_TEMPLATE: conf.WA_TEMPLATE || "",
+      WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
+      PAY_ALIAS: conf.PAY_ALIAS || "",
+      PAY_NOTE: conf.PAY_NOTE || "",
+    };
+
+    applyTheme();
+    setClosedUI(!state.config.FORM_ENABLED);
+  }
+
+  // --- Reset fuerte post-envío (solución a tu punto 1) ---
+  function resetAfterSend(forceCloseTicket=false){
+    // limpiar inputs
+    if (els.dni) els.dni.value = "";
+    if (els.clave) els.clave.value = "";
+    if (els.comentarios) els.comentarios.value = "";
+
+    // reset formaPago a transferencia por defecto
+    if (els.fpTransf) els.fpTransf.checked = true;
+    if (els.fpEfect) els.fpEfect.checked = false;
+
+    // cerrar sheet
+    if (els.sheet) els.sheet.classList.add("hidden");
+
+    // vaciar carrito
+    state.cart.clear();
+    renderCatalogo();
+    renderResumen();
+
+    // opcional cerrar ticket
+    if (forceCloseTicket && els.tkt) els.tkt.classList.add("hidden");
+  }
+
+  function getFormaPagoSelected(){
+    // valores que mandamos al backend
+    if (els.fpEfect && els.fpEfect.checked) return "efectivo";
+    return "transferencia";
   }
 
   // -------- Catálogo / carrito --------
@@ -251,7 +358,7 @@
     }
 
     els.resumenTotal.textContent = "$ " + fmtMoney(total);
-    els.btnConfirmar.disabled = total <= 0;
+    els.btnConfirmar.disabled = total <= 0 || !state.formEnabled;
   }
 
   function patchCardControls(id, v, n){
@@ -278,9 +385,19 @@
   }
 
   // -------- Modales --------
-  function openSheet(){ els.sheet.classList.remove("hidden"); }
+  function openSheet(){
+    if (!state.formEnabled) {
+      toast("Pedidos cerrados.");
+      return;
+    }
+    els.sheet.classList.remove("hidden");
+  }
   function closeSheet(){ els.sheet.classList.add("hidden"); }
-  function closeTicket(){ els.tkt.classList.add("hidden"); }
+  function closeTicket(){
+    els.tkt.classList.add("hidden");
+    // por las dudas, dejamos todo limpio igual
+    resetAfterSend(false);
+  }
 
   async function waitForHtml2Canvas(){
     const start = Date.now();
@@ -295,7 +412,6 @@
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
     els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
-    els.tktNote.textContent = state.config.PAY_NOTE || "";
 
     els.tktItems.innerHTML = "";
     order.items.forEach(it => {
@@ -316,6 +432,11 @@
 
     // ✅ TOTAL del backend
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
+
+    // mostramos forma de pago + nota existente
+    const pm = order.formaPago || "Transferencia";
+    const note = (state.config.PAY_NOTE || "").trim();
+    els.tktNote.textContent = `Forma de pago: ${pm}${note ? " — " + note : ""}`;
 
     els.tkt.classList.remove("hidden");
     if (els.tktClose) els.tktClose.onclick = closeTicket;
@@ -350,10 +471,43 @@
     };
   }
 
+  async function loadCatalogo(){
+    setStatus("Cargando catálogo…");
+    const data = await fetchJsonSafe(`${API}?route=viandas`);
+    state.catalogo = Array.isArray(data.items) ? data.items.slice() : [];
+
+    const toNum = (v) => {
+      const s = String(v ?? "").trim().replace(",", ".");
+      if (!s) return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    };
+    state.catalogo.sort((a,b) => {
+      const ao = toNum(a.Orden);
+      const bo = toNum(b.Orden);
+      if (ao != null && bo != null && ao !== bo) return ao - bo;
+      if (ao != null && bo == null) return -1;
+      if (ao == null && bo != null) return 1;
+      return String(a.Nombre || "").localeCompare(String(b.Nombre || ""), "es", { sensitivity:"base" });
+    });
+
+    renderCatalogo();
+    setStatus("Catálogo actualizado ✓");
+  }
+
   async function enviarPedido(){
+    // refresco config antes de enviar (por si lo cerraste recién)
+    try { await refreshConfigOnly(); } catch {}
+
+    if (!state.formEnabled) {
+      toast("Pedidos cerrados.");
+      return;
+    }
+
     const dni = els.dni.value.trim();
     const clave = els.clave.value.trim();
     const comentarios = els.comentarios.value.trim();
+    const formaPago = getFormaPagoSelected();
 
     if (!/^\d{8}$/.test(dni) || dni.startsWith("0")) { toast("DNI inválido."); return; }
     if (!clave) { toast("Ingresá tu clave."); return; }
@@ -375,6 +529,7 @@
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({
           dni, clave, comentarios,
+          formaPago,
           items: payloadItems,
           ua: navigator.userAgent
         })
@@ -386,113 +541,33 @@
         ? totalServer
         : cartItems.reduce((acc, it) => acc + it.precio * it.cantidad, 0);
 
+      const formaPagoNice = data.formaPago || (formaPago === "efectivo" ? "Efectivo" : "Transferencia");
+
+      // ✅ Reset fuerte inmediato (aunque el ticket quede abierto)
+      resetAfterSend(false);
+
       const order = {
         idPedido: id,
         items: cartItems.map(x => ({ nombre:x.nombre, cantidad:x.cantidad, precio:x.precio })),
         total,
+        formaPago: formaPagoNice,
         fecha: new Date().toLocaleString("es-AR", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit", year:"2-digit" })
       };
 
-      closeSheet();
       openTicket(order);
 
-      state.cart.clear();
-      renderCatalogo();
-      renderResumen();
-
     } catch (e) {
+      if (e.code === "FORM_CLOSED") {
+        toast("Pedidos cerrados.", true);
+        // si el backend dice cerrado, forzamos UI cerrada
+        try { await refreshConfigOnly(); } catch {}
+        return;
+      }
       toast(state.config.MSG_SERVER_FAIL || `No pudimos completar el pedido (${e.message}).`, true);
     } finally {
       els.btnEnviar.disabled = false;
       els.btnEnviar.textContent = "Enviar";
     }
-  }
-
-  async function loadConfig(){
-    setStatus("Obteniendo configuración…");
-    const conf = await fetchJsonSafe(`${API}?route=ui-config`);
-
-    state.config = {
-      THEME: {
-        PRIMARY: conf.THEME_PRIMARY,
-        SECONDARY: conf.THEME_SECONDARY,
-        BG: conf.THEME_BG,
-        TEXT: conf.THEME_TEXT,
-        RADIUS: Number(conf.RADIUS || 16),
-        SPACING: Number(conf.SPACING || 8),
-      },
-      ASSET_HEADER_URL: conf.ASSET_HEADER_URL || "",
-      ASSET_LOGO_URL: conf.ASSET_LOGO_URL || "",
-      ASSET_PLACEHOLDER_IMG_URL: conf.ASSET_PLACEHOLDER_IMG_URL || "",
-      FORM_ENABLED: String(conf.FORM_ENABLED || "true").toLowerCase() === "true",
-      FORM_CLOSED_TITLE: conf.FORM_CLOSED_TITLE,
-      FORM_CLOSED_MESSAGE: conf.FORM_CLOSED_MESSAGE,
-      UI_RESUMEN_ITEMS_VISIBLES: Number(conf.UI_RESUMEN_ITEMS_VISIBLES || 4),
-      UI_MAX_QTY_POR_VIANDA: Number(conf.UI_MAX_QTY_POR_VIANDA || 9),
-      MSG_EMPTY: conf.MSG_EMPTY,
-      MSG_AUTH_FAIL: conf.MSG_AUTH_FAIL,
-      MSG_LIMIT: conf.MSG_LIMIT,
-      MSG_SERVER_FAIL: conf.MSG_SERVER_FAIL,
-      WA_ENABLED: String(conf.WA_ENABLED || "true").toLowerCase() === "true",
-      WA_TEMPLATE: conf.WA_TEMPLATE || "",
-      WA_PHONE_TARGET: conf.WA_PHONE_TARGET || "",
-      PAY_ALIAS: conf.PAY_ALIAS || "",
-      PAY_NOTE: conf.PAY_NOTE || "",
-    };
-
-    applyTheme();
-
-    if (!state.config.FORM_ENABLED) {
-      els.app.classList.add("hidden");
-      els.closed.classList.remove("hidden");
-      els.closedTitle.textContent = state.config.FORM_CLOSED_TITLE || "Pedidos temporalmente cerrados";
-      els.closedMsg.textContent = state.config.FORM_CLOSED_MESSAGE || "Estamos atendiendo por WhatsApp.";
-      setStatus("Formulario cerrado");
-
-      const canWA = state.config.WA_ENABLED && String(state.config.WA_PHONE_TARGET || "").trim();
-      if (canWA) {
-        els.closedWA.classList.remove("hidden");
-        els.closedWA.onclick = () => {
-          const msg = `${els.closedTitle.textContent}\n${els.closedMsg.textContent}`;
-          openWhatsApp(msg);
-        };
-      } else {
-        els.closedWA.classList.add("hidden");
-        els.closedWA.onclick = null;
-      }
-
-      return false;
-    }
-
-    els.closed.classList.add("hidden");
-    els.app.classList.remove("hidden");
-    setStatus("Configuración cargada ✓");
-    return true;
-  }
-
-  async function loadCatalogo(){
-    setStatus("Cargando catálogo…");
-    const data = await fetchJsonSafe(`${API}?route=viandas`);
-    state.catalogo = Array.isArray(data.items) ? data.items.slice() : [];
-
-    // Orden por columna G (Orden)
-    const toNum = (v) => {
-      const s = String(v ?? "").trim().replace(",", ".");
-      if (!s) return null;
-      const n = Number(s);
-      return Number.isFinite(n) ? n : null;
-    };
-    state.catalogo.sort((a,b) => {
-      const ao = toNum(a.Orden);
-      const bo = toNum(b.Orden);
-      if (ao != null && bo != null && ao !== bo) return ao - bo;
-      if (ao != null && bo == null) return -1;
-      if (ao == null && bo != null) return 1;
-      return String(a.Nombre || "").localeCompare(String(b.Nombre || ""), "es", { sensitivity:"base" });
-    });
-
-    renderCatalogo();
-    setStatus("Catálogo actualizado ✓");
   }
 
   // Events
@@ -509,17 +584,21 @@
     if (!els.sheet.classList.contains("hidden")) closeSheet();
   });
 
-  // Boot
+  // Boot + polling de cierre (cada 30s)
   (async function boot(){
     try {
-      const ok = await loadConfig();
-      if (!ok) return;
-      await loadCatalogo();
+      await refreshConfigOnly();
+      if (state.formEnabled) await loadCatalogo();
       renderResumen();
+      setStatus("Listo ✓");
     } catch (e) {
       console.error("BOOT ERROR:", e);
       setStatus(`ERROR: ${e.message || "falló la carga"}`);
       toast(`No cargó: ${e.message || "revisar API"}`, true);
     }
   })();
+
+  setInterval(() => {
+    refreshConfigOnly().catch(() => {});
+  }, 30000);
 })();
