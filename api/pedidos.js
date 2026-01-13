@@ -20,7 +20,7 @@ const SHEET_CONFIG = "Configuracion";
 const UP_URL = (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/+$/, "");
 const UP_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
 
-const MIN_START_ID = 10001; // si no hay nada, arrancamos acá
+const MIN_START_ID = 10001;
 
 // ---------- CORS / response ----------
 function setCors(res) {
@@ -84,6 +84,7 @@ function normStr(s) {
     .trim()
     .toLowerCase();
 }
+
 function findHeaderIndex(headers, candidates) {
   const H = (headers || []).map((h) => normStr(h));
   const C = candidates.map((c) => normStr(c));
@@ -99,13 +100,21 @@ function findHeaderIndex(headers, candidates) {
   }
   return -1;
 }
+
 function normDni(v) {
   return String(v ?? "").replace(/\D/g, "").trim();
 }
 
-// ✅ SOLO "validado"
+// ✅ SOLO “Validado”
 function isValidadoStrict(v) {
   return normStr(v) === "validado";
+}
+
+function toNumOrNull(v) {
+  const s = String(v ?? "").trim().replace(",", ".");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
 // ---------- Upstash ----------
@@ -194,18 +203,31 @@ async function clearFails(dni, ip) {
   await Promise.all([upDel(k.dniFail), ip ? upDel(k.ipFail) : Promise.resolve()]);
 }
 
-// ---------- IdPedido con fallback J2 ----------
-async function readPedidosJ2() {
+// ---------- IdPedido con fallback J1 ----------
+async function readPedidosJ1() {
   try {
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_PEDIDOS}!J2`,
+      range: `${SHEET_PEDIDOS}!J1`,
     });
     const v = r.data.values?.[0]?.[0];
     const n = Number(String(v ?? "").trim());
     return Number.isFinite(n) ? n : null;
   } catch {
     return null;
+  }
+}
+
+async function updatePedidosJ1(lastId) {
+  try {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_PEDIDOS}!J1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[String(lastId)]] },
+    });
+  } catch {
+    // no frenamos el pedido por esto
   }
 }
 
@@ -216,12 +238,10 @@ async function readLastIdFromSheetA() {
       range: `${SHEET_PEDIDOS}!A:A`,
     });
     const values = r.data.values || [];
-    if (values.length === 0) return null;
+    if (!values.length) return null;
 
-    // escanear desde abajo, primer número válido
     for (let i = values.length - 1; i >= 0; i--) {
-      const v = values[i]?.[0];
-      const n = Number(String(v ?? "").trim());
+      const n = Number(String(values[i]?.[0] ?? "").trim());
       if (Number.isFinite(n) && n > 0) return n;
     }
     return null;
@@ -230,34 +250,20 @@ async function readLastIdFromSheetA() {
   }
 }
 
-async function updatePedidosJ2(lastId) {
-  try {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_PEDIDOS}!J2`,
-      valueInputOption: "RAW",
-      requestBody: { values: [[String(lastId)]] },
-    });
-  } catch {
-    // no frenamos el pedido por esto
-  }
-}
-
 async function getNextIdPedido() {
   const key = "id:pedidos:last";
 
-  // base: primero intentamos Upstash (si no está inicializado, lo inicializamos con J2 o con hoja)
   if (hasUpstash()) {
     let current = await upGet(key);
 
     if (current == null) {
-      // Inicialización del contador desde hoja/J2
-      const j2 = await readPedidosJ2();
+      // Inicializar desde hoja/J1 si es la primera vez
+      const j1 = await readPedidosJ1();
       const lastSheet = await readLastIdFromSheetA();
       const base = Number.isFinite(lastSheet)
         ? lastSheet
-        : Number.isFinite(j2)
-          ? j2
+        : Number.isFinite(j1)
+          ? j1
           : (MIN_START_ID - 1);
 
       await upSet(key, String(base));
@@ -265,7 +271,6 @@ async function getNextIdPedido() {
 
     let n = Number(await upIncr(key));
 
-    // seguridad por si quedó algo raro
     if (!Number.isFinite(n) || n < MIN_START_ID) {
       await upSet(key, String(MIN_START_ID - 1));
       n = Number(await upIncr(key));
@@ -274,12 +279,12 @@ async function getNextIdPedido() {
     return n;
   }
 
-  // Sin Upstash: si hay registros, último + 1; si está vacío, J2 + 1
+  // Sin Upstash: si hay registros, último + 1; si está vacío, J1 + 1
   const lastSheet = await readLastIdFromSheetA();
   if (Number.isFinite(lastSheet)) return lastSheet + 1;
 
-  const j2 = await readPedidosJ2();
-  if (Number.isFinite(j2)) return j2 + 1;
+  const j1 = await readPedidosJ1();
+  if (Number.isFinite(j1)) return j1 + 1;
 
   return MIN_START_ID;
 }
@@ -345,26 +350,21 @@ export default async function handler(req, res) {
       const disponible = String(row[5]).toLowerCase() === "true";
       if (!disponible) continue;
 
+      const precio = toNumOrNull(row[3]) ?? 0;
+
       items.push({
         IdVianda: row[0],
         Nombre: row[1],
         Descripcion: row[2],
-        Precio: Number(row[3]) | 0,
+        Precio: precio,
         Imagen: normalizeImage(row[4]),
         Orden: row[6] ?? "",
       });
     }
 
-    const toNum = (v) => {
-      const s = String(v ?? "").trim().replace(",", ".");
-      if (!s) return null;
-      const n = Number(s);
-      return Number.isFinite(n) ? n : null;
-    };
-
     items.sort((a, b) => {
-      const ao = toNum(a.Orden);
-      const bo = toNum(b.Orden);
+      const ao = toNumOrNull(a.Orden);
+      const bo = toNumOrNull(b.Orden);
       if (ao != null && bo != null && ao !== bo) return ao - bo;
       if (ao != null && bo == null) return -1;
       if (ao == null && bo != null) return 1;
@@ -413,7 +413,7 @@ export default async function handler(req, res) {
 
     const iDNI = findHeaderIndex(headers, ["DNI", "Documento"]);
     const iClave = findHeaderIndex(headers, ["Clave", "Password", "Pass"]);
-    const iEstado = findHeaderIndex(headers, ["Estado"]); // ← buscamos “Estado” (si existe, exigimos Validado)
+    const iEstado = findHeaderIndex(headers, ["Estado"]); // si existe, exigimos Validado
 
     if (iDNI < 0 || iClave < 0) return err(res, 500, "CONFIG_ERROR");
 
@@ -440,7 +440,8 @@ export default async function handler(req, res) {
     for (const row of rowsV) {
       if (!row || row.length < 4) continue;
       const id = String(row[0]);
-      map.set(id, { nombre: row[1], precio: Number(row[3]) | 0 });
+      const precio = toNumOrNull(row[3]) ?? 0;
+      map.set(id, { nombre: row[1], precio });
     }
 
     const idPedido = await getNextIdPedido();
@@ -482,8 +483,8 @@ export default async function handler(req, res) {
       requestBody: { values: toAppend },
     });
 
-    // ✅ Guardamos el último ID en J2 automáticamente
-    await updatePedidosJ2(idPedido);
+    // ✅ Guardamos el último ID en J1 automáticamente
+    await updatePedidosJ1(idPedido);
 
     return ok(res, { idPedido, total });
   }
