@@ -426,7 +426,7 @@
 
     const pm = order.formaPago || "Transferencia";
     const note = (state.config.PAY_NOTE || "").trim();
-    els.tktNote.textContent = `Forma de pago: ${pm}${note ? " — " + note : ""}`;
+    els.tktNote.textContent = `${pm}${note ? " — " + note : ""}`;
 
     els.tkt.classList.remove("hidden");
     if (els.tktClose) els.tktClose.onclick = closeTicket;
