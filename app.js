@@ -24,10 +24,8 @@
     closedMsg: document.getElementById("closed-msg"),
     closedWA: document.getElementById("closed-wa"),
     app: document.getElementById("app"),
-    // FormaPago (radio)
     fpTransf: document.getElementById("fp_transf"),
     fpEfect: document.getElementById("fp_efectivo"),
-    // Ticket
     tkt: document.getElementById("ticket"),
     tktContent: document.getElementById("ticket-content"),
     tktLogo: document.getElementById("tkt-logo"),
@@ -174,7 +172,6 @@
         els.closedWA.onclick = null;
       }
 
-      // si se cerró mientras estaban operando, limpiamos todo
       resetAfterSend(true);
     } else {
       state.formEnabled = true;
@@ -218,7 +215,6 @@
     setClosedUI(!state.config.FORM_ENABLED);
   }
 
-  // --- Reset fuerte post-envío ---
   function resetAfterSend(forceCloseTicket=false){
     if (els.dni) els.dni.value = "";
     if (els.clave) els.clave.value = "";
@@ -241,7 +237,6 @@
     return "transferencia";
   }
 
-  // -------- Catálogo / carrito --------
   function buildControls(v, current){
     const frag = document.createDocumentFragment();
     if (current === 0) {
@@ -383,7 +378,6 @@
     renderResumen();
   }
 
-  // -------- Modales --------
   function openSheet(){
     if (!state.formEnabled) {
       toast("Pedidos cerrados.");
@@ -563,7 +557,6 @@
     }
   }
 
-  // Events
   els.btnConfirmar.addEventListener("click", openSheet);
   els.btnCancelar.addEventListener("click", closeSheet);
   els.btnEnviar.addEventListener("click", enviarPedido);
@@ -577,7 +570,6 @@
     if (!els.sheet.classList.contains("hidden")) closeSheet();
   });
 
-  // Boot + polling de cierre (cada 30s)
   (async function boot(){
     try {
       await refreshConfigOnly();
