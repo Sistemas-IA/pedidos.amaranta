@@ -117,13 +117,17 @@
     if (t.RADIUS != null) root.style.setProperty("--radius", t.RADIUS + "px");
     if (t.SPACING != null) root.style.setProperty("--space", t.SPACING + "px");
 
-    const headerUrl = state.config.ASSET_HEADER_URL ? String(state.config.ASSET_HEADER_URL).trim() : "";
+    const headerUrlMobile = state.config.ASSET_HEADER_URL ? String(state.config.ASSET_HEADER_URL).trim() : "";
+    const headerUrlDesktop = state.config.ASSET_HEADER_DESKTOP_URL
+      ? String(state.config.ASSET_HEADER_DESKTOP_URL).trim()
+      : headerUrlMobile;
+
     if (els.headerImg) {
-      if (headerUrl) { els.headerImg.src = headerUrl; els.headerImg.style.display = "block"; }
+      if (headerUrlMobile) { els.headerImg.src = headerUrlMobile; els.headerImg.style.display = "block"; }
       else { els.headerImg.src = ""; els.headerImg.style.display = "none"; }
     }
     if (els.headerImgSide) {
-      if (headerUrl) { els.headerImgSide.src = headerUrl; els.headerImgSide.style.display = "block"; }
+      if (headerUrlDesktop) { els.headerImgSide.src = headerUrlDesktop; els.headerImgSide.style.display = "block"; }
       else { els.headerImgSide.src = ""; els.headerImgSide.style.display = "none"; }
     }
 
@@ -191,6 +195,7 @@
         SPACING: Number(conf.SPACING || 8),
       },
       ASSET_HEADER_URL: conf.ASSET_HEADER_URL || "",
+      ASSET_HEADER_DESKTOP_URL: conf.ASSET_HEADER_DESKTOP_URL || "",
       ASSET_LOGO_URL: conf.ASSET_LOGO_URL || "",
       ASSET_PLACEHOLDER_IMG_URL: conf.ASSET_PLACEHOLDER_IMG_URL || "",
       FORM_ENABLED: String(conf.FORM_ENABLED || "true").toLowerCase() === "true",
@@ -213,31 +218,25 @@
     setClosedUI(!state.config.FORM_ENABLED);
   }
 
-  // --- Reset fuerte post-envío (solución a tu punto 1) ---
+  // --- Reset fuerte post-envío ---
   function resetAfterSend(forceCloseTicket=false){
-    // limpiar inputs
     if (els.dni) els.dni.value = "";
     if (els.clave) els.clave.value = "";
     if (els.comentarios) els.comentarios.value = "";
 
-    // reset formaPago a transferencia por defecto
     if (els.fpTransf) els.fpTransf.checked = true;
     if (els.fpEfect) els.fpEfect.checked = false;
 
-    // cerrar sheet
     if (els.sheet) els.sheet.classList.add("hidden");
 
-    // vaciar carrito
     state.cart.clear();
     renderCatalogo();
     renderResumen();
 
-    // opcional cerrar ticket
     if (forceCloseTicket && els.tkt) els.tkt.classList.add("hidden");
   }
 
   function getFormaPagoSelected(){
-    // valores que mandamos al backend
     if (els.fpEfect && els.fpEfect.checked) return "efectivo";
     return "transferencia";
   }
@@ -395,7 +394,6 @@
   function closeSheet(){ els.sheet.classList.add("hidden"); }
   function closeTicket(){
     els.tkt.classList.add("hidden");
-    // por las dudas, dejamos todo limpio igual
     resetAfterSend(false);
   }
 
@@ -430,10 +428,8 @@
       els.tktItems.appendChild(row);
     });
 
-    // ✅ TOTAL del backend
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
 
-    // mostramos forma de pago + nota existente
     const pm = order.formaPago || "Transferencia";
     const note = (state.config.PAY_NOTE || "").trim();
     els.tktNote.textContent = `Forma de pago: ${pm}${note ? " — " + note : ""}`;
@@ -496,7 +492,6 @@
   }
 
   async function enviarPedido(){
-    // refresco config antes de enviar (por si lo cerraste recién)
     try { await refreshConfigOnly(); } catch {}
 
     if (!state.formEnabled) {
@@ -543,7 +538,6 @@
 
       const formaPagoNice = data.formaPago || (formaPago === "efectivo" ? "Efectivo" : "Transferencia");
 
-      // ✅ Reset fuerte inmediato (aunque el ticket quede abierto)
       resetAfterSend(false);
 
       const order = {
@@ -559,7 +553,6 @@
     } catch (e) {
       if (e.code === "FORM_CLOSED") {
         toast("Pedidos cerrados.", true);
-        // si el backend dice cerrado, forzamos UI cerrada
         try { await refreshConfigOnly(); } catch {}
         return;
       }
