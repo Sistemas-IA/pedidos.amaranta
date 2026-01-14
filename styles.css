@@ -98,7 +98,7 @@ main{
 
 /* ✅ cambio pedido: precio “sube” (sin empuje hacia el fondo) */
 .card-body{
-  padding:14px;
+  padding:12px;
   display:grid;
   grid-template-rows:auto auto auto;
   gap:8px;
