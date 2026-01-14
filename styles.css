@@ -76,14 +76,16 @@ main{
 }
 
 /* ===== Card (base) ===== */
+/* ✅ cambio pedido: foto ocupa 50% del ancho */
 .card{
   border:1px solid #e6e6e6;
   border-radius:var(--radius);
-  overflow:hidden;             /* ok, pero NO vamos a fijar ratio alto */
+  overflow:hidden;
   background:#fff;
+
   display:grid;
-  grid-template-columns:clamp(140px, 40%, 190px) minmax(0, 1fr);
-  min-height:240px;            /* clave: evita “aplastado” */
+  grid-template-columns: 1fr 1fr; /* mitad y mitad */
+  min-height:260px;              /* un toque más alto para que entre cómodo */
 }
 
 .card-img{ background:#f7f7f7; aspect-ratio:1/1; }
@@ -94,13 +96,15 @@ main{
   display:block;
 }
 
+/* ✅ cambio pedido: precio “sube” (sin empuje hacia el fondo) */
 .card-body{
   padding:14px;
   display:grid;
-  grid-template-rows:auto 1fr auto;
+  grid-template-rows:auto auto auto;
   gap:8px;
   min-height:0;
 }
+
 .card-title{
   font-size:18px;
   margin:0;
@@ -110,9 +114,9 @@ main{
   color:#555;
 }
 
-/* bottom: mobile y base */
+/* bottom: precio arriba, selector debajo */
 .card-bottom{
-  margin-top:auto;
+  margin-top:0;
   display:flex;
   flex-direction:column;
   align-items:flex-end;
@@ -323,7 +327,7 @@ textarea{ min-height:70px; }
 
 /* ===== XS tweaks ===== */
 @media (max-width: 360px){
-  .card{ min-height:220px; }
+  .card{ min-height:230px; }
   .card-title{ font-size:16px; }
   .qty button,.plus{ padding:5px 9px; font-size:15px; }
   .plus{ width:30px; height:30px; }
@@ -343,7 +347,7 @@ textarea{ min-height:70px; }
   display:block;
   width:100%;
   height:auto;
-  object-fit:contain; /* sin recorte, mantiene proporción */
+  object-fit:contain;
 }
 
 @media (min-width: 1024px) and (hover:hover) and (pointer:fine){
@@ -374,7 +378,7 @@ textarea{ min-height:70px; }
   /* 2 columnas siempre y filas con mínimo (evita “aplastado”) */
   #catalogo.grid{
     grid-template-columns:repeat(2, 1fr) !important;
-    grid-auto-rows:minmax(240px, auto);
+    grid-auto-rows:minmax(260px, auto);
   }
 
   /* Derecha: header arriba + carrito abajo */
@@ -426,11 +430,5 @@ textarea{ min-height:70px; }
     border-top:1px solid #eee;
     background:#fff;
     flex:0 0 auto;
-  }
-
-  /* CLAVE: en pantallas muy anchas, la foto NO crece infinito */
-  .card{
-    grid-template-columns:clamp(170px, 34%, 240px) 1fr;
-    min-height:240px;
   }
 }
