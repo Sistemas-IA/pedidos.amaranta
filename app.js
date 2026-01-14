@@ -424,9 +424,15 @@
 
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
 
+    // ✅ Mensaje: forma de pago + nota global + mensaje por zona (si viene)
     const pm = order.formaPago || "Transferencia";
     const note = (state.config.PAY_NOTE || "").trim();
-    els.tktNote.textContent = `${pm}${note ? " — " + note : ""}`;
+
+    const lines = [];
+    lines.push(`${pm}${note ? " — " + note : ""}`);
+    if (order.zonaMensaje) lines.push(order.zonaMensaje);
+
+    els.tktNote.textContent = lines.join("\n");
 
     els.tkt.classList.remove("hidden");
     if (els.tktClose) els.tktClose.onclick = closeTicket;
@@ -531,6 +537,7 @@
         : cartItems.reduce((acc, it) => acc + it.precio * it.cantidad, 0);
 
       const formaPagoNice = data.formaPago || (formaPago === "efectivo" ? "Efectivo" : "Transferencia");
+      const zonaMensaje = (data.zonaMensaje || "").toString().trim();
 
       resetAfterSend(false);
 
@@ -539,6 +546,7 @@
         items: cartItems.map(x => ({ nombre:x.nombre, cantidad:x.cantidad, precio:x.precio })),
         total,
         formaPago: formaPagoNice,
+        zonaMensaje,
         fecha: new Date().toLocaleString("es-AR", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit", year:"2-digit" })
       };
 
@@ -550,6 +558,13 @@
         try { await refreshConfigOnly(); } catch {}
         return;
       }
+
+      // ✅ NUEVO: toast amigable si la zona está cerrada
+      if (e.code === "ZONA_CERRADA") {
+        toast("En tu zona ya cerró la toma de pedidos por hoy 🙂", true);
+        return;
+      }
+
       toast(state.config.MSG_SERVER_FAIL || `No pudimos completar el pedido (${e.message}).`, true);
     } finally {
       els.btnEnviar.disabled = false;
