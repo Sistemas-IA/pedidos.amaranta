@@ -17,7 +17,6 @@ const SHEET_CLIENTES = "Clientes";
 const SHEET_PEDIDOS = "Pedidos";
 const SHEET_CONFIG = "Configuracion";
 
-// ✅ ahora el contador vive en K1 (porque insertaste una columna G)
 const LAST_ID_CELL = `${SHEET_PEDIDOS}!K1`;
 
 const UP_URL = (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/+$/, "");
@@ -111,7 +110,6 @@ function normDni(v) {
   return String(v ?? "").replace(/\D/g, "").trim();
 }
 
-// ✅ SOLO “Validado”
 function isValidadoStrict(v) {
   return normStr(v) === "validado";
 }
@@ -127,7 +125,6 @@ function normalizeFormaPago(v) {
   const s = normStr(v);
   if (s === "efectivo") return "Efectivo";
   if (s === "transferencia") return "Transferencia";
-  // fallback razonable
   return "Transferencia";
 }
 
@@ -149,7 +146,6 @@ async function upGet(key) { return upCall("get", key); }
 async function upSet(key, value) { return upCall("set", key, value); }
 async function upIncr(key) { return upCall("incr", key); }
 
-// ---------- Rate limit (opcional si hay Upstash) ----------
 const RL_DNI_FAILS = 5;
 const RL_DNI_WINDOW_SEC = 10 * 60;
 const RL_DNI_BLOCK_SEC = 15 * 60;
@@ -209,9 +205,7 @@ async function updateLastIdCell(lastId) {
       valueInputOption: "RAW",
       requestBody: { values: [[String(lastId)]] },
     });
-  } catch {
-    // no frenamos el pedido por esto
-  }
+  } catch {}
 }
 
 async function readLastIdFromSheetA() {
@@ -256,7 +250,6 @@ async function getNextIdPedido() {
     return n;
   }
 
-  // sin Upstash
   const lastSheet = await readLastIdFromSheetA();
   if (Number.isFinite(lastSheet)) return lastSheet + 1;
 
@@ -276,7 +269,6 @@ export default async function handler(req, res) {
 
   const route = String(req.query.route || "").toLowerCase();
 
-  // GET ui-config
   if (req.method === "GET" && route === "ui-config") {
     const kv = await readConfigKV();
     return ok(res, {
@@ -292,8 +284,8 @@ export default async function handler(req, res) {
       SPACING: kv.SPACING ?? "8",
 
       ASSET_HEADER_URL: normalizeImage(kv.ASSET_HEADER_URL ?? ""),
-
       ASSET_HEADER_DESKTOP_URL: normalizeImage(kv.ASSET_HEADER_DESKTOP_URL ?? ""),
+
       ASSET_PLACEHOLDER_IMG_URL: normalizeImage(kv.ASSET_PLACEHOLDER_IMG_URL ?? ""),
       ASSET_LOGO_URL: normalizeImage(kv.ASSET_LOGO_URL ?? ""),
 
@@ -314,7 +306,6 @@ export default async function handler(req, res) {
     });
   }
 
-  // GET viandas
   if (req.method === "GET" && route === "viandas") {
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
@@ -353,9 +344,7 @@ export default async function handler(req, res) {
     return ok(res, { items });
   }
 
-  // POST pedido
   if (req.method === "POST" && route === "pedido") {
-    // ✅ corte definitivo: si lo cerraste en la planilla, NO entra ningún pedido
     const kv = await readConfigKV();
     if (!isFormEnabled(kv)) {
       return err(res, 403, "FORM_CLOSED");
@@ -386,7 +375,6 @@ export default async function handler(req, res) {
       return err(res, 429, "RATE_LIMIT", { retryAfterSeconds: blk.retryAfterSeconds });
     }
 
-    // validar cliente por encabezados
     const rc = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: `${SHEET_CLIENTES}!A:Z`,
@@ -398,7 +386,7 @@ export default async function handler(req, res) {
 
     const iDNI = findHeaderIndex(headers, ["DNI", "Documento"]);
     const iClave = findHeaderIndex(headers, ["Clave", "Password", "Pass"]);
-    const iEstado = findHeaderIndex(headers, ["Estado"]); // si existe, exigimos Validado
+    const iEstado = findHeaderIndex(headers, ["Estado"]);
 
     if (iDNI < 0 || iClave < 0) return err(res, 500, "CONFIG_ERROR");
 
@@ -414,7 +402,6 @@ export default async function handler(req, res) {
 
     await clearFailDni(dni);
 
-    // mapa precios desde viandas
     const rv = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: `${SHEET_VIANDAS}!A:D`,
@@ -445,18 +432,17 @@ export default async function handler(req, res) {
       const subtotal = v.precio * qty;
       total += subtotal;
 
-      // ✅ A:J con FormaPago en G
       toAppend.push([
-        idPedido,                 // A IdPedido
-        String(dni),              // B DNI
-        v.nombre,                 // C Vianda
-        qty,                      // D Cantidad
-        comentarios,              // E Comentarios
-        subtotal,                 // F Precio/Subtotal
-        formaPago,                // G FormaPago
-        new Date().toISOString(), // H TimeStamp
-        ip,                       // I IP
-        ua,                       // J UserAgent
+        idPedido,
+        String(dni),
+        v.nombre,
+        qty,
+        comentarios,
+        subtotal,
+        formaPago,
+        new Date().toISOString(),
+        ip,
+        ua,
       ]);
     }
 
