@@ -16,6 +16,7 @@ const SHEET_VIANDAS = "Viandas";
 const SHEET_CLIENTES = "Clientes";
 const SHEET_PEDIDOS = "Pedidos";
 const SHEET_CONFIG = "Configuracion";
+const SHEET_ZONAS = "Zonas";
 
 const LAST_ID_CELL = `${SHEET_PEDIDOS}!K1`;
 
@@ -126,6 +127,52 @@ function normalizeFormaPago(v) {
   if (s === "efectivo") return "Efectivo";
   if (s === "transferencia") return "Transferencia";
   return "Transferencia";
+}
+
+function isTrueSheet(v) {
+  return String(v ?? "").trim().toLowerCase() === "true";
+}
+
+// ✅ Zonas: valida habilitación + devuelve mensaje (por Zona del cliente)
+async function getZonaInfoByNombre(zonaNombre) {
+  try {
+    const r = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_ZONAS}!A:Z`,
+    });
+
+    const values = r.data.values || [];
+    if (!values.length) return { found: false, enabled: false, mensaje: "" };
+
+    const headers = values[0] || [];
+    const rows = values.slice(1);
+
+    // preferimos headers si existen
+    let iZona = findHeaderIndex(headers, ["Zona"]);
+    let iEstado = findHeaderIndex(headers, ["Estado"]);
+    let iMensaje = findHeaderIndex(headers, ["Mensaje"]);
+
+    // fallback por si no hay headers reales
+    if (iZona < 0) iZona = 0;      // A
+    if (iEstado < 0) iEstado = 1;  // B
+    if (iMensaje < 0) iMensaje = 3; // D
+
+    const target = normStr(zonaNombre);
+
+    for (const row of rows) {
+      const z = String(row?.[iZona] ?? "").trim();
+      if (!z) continue;
+      if (normStr(z) !== target) continue;
+
+      const enabled = isTrueSheet(row?.[iEstado]);
+      const mensaje = String(row?.[iMensaje] ?? "").trim();
+      return { found: true, enabled, mensaje };
+    }
+
+    return { found: false, enabled: false, mensaje: "" };
+  } catch {
+    return { found: false, enabled: false, mensaje: "" };
+  }
 }
 
 // ---------- Upstash ----------
@@ -387,6 +434,7 @@ export default async function handler(req, res) {
     const iDNI = findHeaderIndex(headers, ["DNI", "Documento"]);
     const iClave = findHeaderIndex(headers, ["Clave", "Password", "Pass"]);
     const iEstado = findHeaderIndex(headers, ["Estado"]);
+    const iZona = findHeaderIndex(headers, ["Zona"]);
 
     if (iDNI < 0 || iClave < 0) return err(res, 500, "CONFIG_ERROR");
 
@@ -401,6 +449,28 @@ export default async function handler(req, res) {
     }
 
     await clearFailDni(dni);
+
+    // ✅ NUEVO: validación de zona habilitada en pestaña Zonas
+    if (iZona < 0) {
+      return err(res, 500, "CONFIG_ERROR", { message: "Falta la columna Zona en Clientes." });
+    }
+    const zonaCliente = String(match?.[iZona] ?? "").trim();
+    if (!zonaCliente) {
+      return err(res, 403, "ZONA_NO_ASIGNADA", { message: "Tu zona no está asignada. Escribinos por WhatsApp." });
+    }
+
+    const zInfo = await getZonaInfoByNombre(zonaCliente);
+    if (!zInfo.found) {
+      return err(res, 403, "ZONA_NO_CONFIG", { message: "Tu zona no está configurada. Escribinos por WhatsApp." });
+    }
+    if (!zInfo.enabled) {
+      // ✅ lo que pediste: toast amigable cuando Estado de zona = FALSE
+      return err(res, 403, "ZONA_CERRADA", {
+        message: "En tu zona ya cerró la toma de pedidos por hoy 🙂",
+      });
+    }
+
+    const zonaMensaje = String(zInfo.mensaje || "").trim().slice(0, 400);
 
     const rv = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
@@ -457,7 +527,8 @@ export default async function handler(req, res) {
 
     await updateLastIdCell(idPedido);
 
-    return ok(res, { idPedido, total, formaPago });
+    // ✅ devolvemos el mensaje de zona para el ticket
+    return ok(res, { idPedido, total, formaPago, zonaMensaje });
   }
 
   return err(res, 404, "ROUTE_NOT_FOUND");
