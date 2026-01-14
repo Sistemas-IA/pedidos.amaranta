@@ -82,14 +82,14 @@ main{
   overflow:hidden;             /* ok, pero NO vamos a fijar ratio alto */
   background:#fff;
   display:grid;
-  grid-template-columns:3fr 2fr;
+  grid-template-columns:clamp(140px, 40%, 190px) minmax(0, 1fr);
   min-height:240px;            /* clave: evita “aplastado” */
 }
 
-.card-img{ background:#f7f7f7; }
+.card-img{ background:#f7f7f7; aspect-ratio:1/1; }
 .card-img img{
   width:100%;
-  aspect-ratio:1/1;            /* foto cuadrada */
+  height:100%;
   object-fit:cover;
   display:block;
 }
@@ -114,11 +114,12 @@ main{
 .card-bottom{
   margin-top:auto;
   display:flex;
+  flex-direction:column;
   align-items:flex-end;
-  justify-content:space-between;
-  gap:12px;
+  gap:10px;
 }
-.card-price{ font-weight:700; }
+
+.card-price{ font-weight:700; width:100%; text-align:right; }
 
 .qty{
   display:inline-flex;
@@ -329,21 +330,20 @@ textarea{ min-height:70px; }
 }
 
 /* ==========================================================
-   DESKTOP SPLIT 30/70 (solo PC real) — NO toca mobile
+   DESKTOP SPLIT 70/30 (solo PC real) — NO toca mobile
+   Catálogo a la izquierda (70%) + Resumen a la derecha (30%)
    ========================================================== */
 .sidehdr{ display:none; }
 .sidehdr-img{
   width:100%;
-  aspect-ratio:1/1;
   overflow:hidden;
   background:#fff;
 }
 #header-img-side{
   display:block;
   width:100%;
-  height:100%;
-  object-fit:cover;          /* recorte central */
-  object-position:center 60%;/* un toque abajo para que “agarre” el logo */
+  height:auto;
+  object-fit:contain; /* sin recorte, mantiene proporción */
 }
 
 @media (min-width: 1024px) and (hover:hover) and (pointer:fine){
@@ -357,13 +357,13 @@ textarea{ min-height:70px; }
     margin:0;
     padding:0;
     display:grid;
-    grid-template-columns:30% 70%;
+    grid-template-columns:70% 30%;
     background:var(--bg);
   }
 
-  /* Columna derecha: catálogo scroll */
+  /* Izquierda: catálogo scroll */
   #catalogo{
-    grid-column:2;
+    grid-column:1;
     height:100%;
     overflow-y:auto;
     padding:16px;
@@ -371,47 +371,54 @@ textarea{ min-height:70px; }
     align-content:start;
   }
 
-  /* 2 columnas y filas con mínimo (evita aplastado) */
+  /* 2 columnas siempre y filas con mínimo (evita “aplastado”) */
   #catalogo.grid{
     grid-template-columns:repeat(2, 1fr) !important;
     grid-auto-rows:minmax(240px, auto);
   }
 
-  /* Columna izquierda: 50% header, 50% carrito */
+  /* Derecha: header arriba + carrito abajo */
   #resumen{
-    grid-column:1;
+    grid-column:2;
     height:100%;
     position:relative;
     bottom:auto;
     border-top:0;
-    border-right:1px solid #eee;
+    border-left:1px solid #eee;
     padding:0;
     background:#fff;
 
-    display:grid;
-    grid-template-rows:50% 1fr;
+    display:flex;
+    flex-direction:column;
     overflow:hidden;
   }
 
   .sidehdr{
     display:block;
     border-bottom:1px solid #eee;
-    overflow:hidden;
   }
 
+  .wrap.mini{ padding:8px 16px; }
+
   .resumen-pane{
+    flex:1 1 auto;
     display:flex;
     flex-direction:column;
     overflow:hidden;
     min-height:0;
   }
 
+  /* El listado crece hacia arriba y scrollea cuando hace falta */
   #resumen-list{
     padding:10px 16px;
     margin:0;
     overflow-y:auto;
     flex:1 1 auto;
     min-height:0;
+    display:flex;
+    flex-direction:column;
+    justify-content:flex-end;
+    gap:4px;
   }
 
   #resumen .bar{
@@ -423,13 +430,7 @@ textarea{ min-height:70px; }
 
   /* CLAVE: en pantallas muy anchas, la foto NO crece infinito */
   .card{
-    grid-template-columns:clamp(190px, 34%, 260px) 1fr;
+    grid-template-columns:clamp(170px, 34%, 240px) 1fr;
     min-height:240px;
   }
-}
-
-/* Ultra-wide: 3 columnas en el catálogo */
-@media (min-width: 1500px) and (hover:hover) and (pointer:fine){
-  #catalogo.grid{ grid-template-columns:repeat(3, 1fr) !important; }
-  .card{ grid-template-columns:clamp(180px, 33%, 235px) 1fr; }
 }
