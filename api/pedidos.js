@@ -292,6 +292,8 @@ export default async function handler(req, res) {
       SPACING: kv.SPACING ?? "8",
 
       ASSET_HEADER_URL: normalizeImage(kv.ASSET_HEADER_URL ?? ""),
+
+      ASSET_HEADER_DESKTOP_URL: normalizeImage(kv.ASSET_HEADER_DESKTOP_URL ?? ""),
       ASSET_PLACEHOLDER_IMG_URL: normalizeImage(kv.ASSET_PLACEHOLDER_IMG_URL ?? ""),
       ASSET_LOGO_URL: normalizeImage(kv.ASSET_LOGO_URL ?? ""),
 
