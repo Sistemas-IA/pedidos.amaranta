@@ -170,7 +170,7 @@ async function getZonaInfoByNombre(zonaNombre) {
   }
 }
 
-// ---------- Upstash (solo para IdPedido; bloqueo DNI queda desactivado por defecto) ----------
+// ---------- Upstash ----------
 const hasUpstash = () => !!(UP_URL && UP_TOKEN);
 
 function upPath(cmd, ...parts) {
@@ -185,13 +185,13 @@ async function upCall(cmd, ...parts) {
   return j.result;
 }
 async function upGet(key) { return upCall("get", key); }
-async function upSet(key, value) { return upCall("set", key, value); }
+async function upSet(key, value, ...opts) { return upCall("set", key, value, ...opts); }
 async function upIncr(key) { return upCall("incr", key); }
+async function upDel(key) { return upCall("del", key); }
 
 // (bloqueo DNI) — por defecto apagado
 async function checkBlockedDni(_dni){
   if (!DNI_BLOCK_ENABLED) return { blocked:false };
-  // si algún día lo reactivás, acá ponés la lógica
   return { blocked:false };
 }
 async function registerFailDni(_dni){
@@ -273,6 +273,149 @@ async function getNextIdPedido() {
   if (Number.isFinite(k1)) return k1 + 1;
 
   return MIN_START_ID;
+}
+
+// ---------- Anti-duplicados (1 pedido por DNI por día) ----------
+function buenosAiresDayKey(d = new Date()){
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d); // YYYY-MM-DD
+}
+
+async function acquireDniDayLock(dni){
+  // Si hay Upstash: lock atómico. Si no: lo manejamos con check en sheet.
+  if (!hasUpstash()) return { ok:true, key:null };
+
+  const day = buenosAiresDayKey();
+  const key = `order:${day}:dni:${dni}`;
+
+  // SET key LOCKED EX 93600 NX (26h), atómico
+  const r = await upSet(key, "LOCKED", "EX", "93600", "NX");
+  if (r === "OK") return { ok:true, key };
+
+  const current = await upGet(key); // "LOCKED" o un idPedido ya finalizado
+  return { ok:false, key, current };
+}
+
+async function finalizeDniDayLock(key, idPedido){
+  if (!key || !hasUpstash()) return;
+  // Setea el idPedido conservando TTL
+  await upSet(key, String(idPedido), "XX", "KEEPTTL");
+}
+
+async function releaseDniDayLock(key){
+  if (!key || !hasUpstash()) return;
+  await upDel(key);
+}
+
+// Busca pedido existente HOY por DNI y arma ticket (más eficiente: contiguo por IdPedido)
+async function findExistingOrderTodayByDni(dni){
+  const today = buenosAiresDayKey();
+  const dniN = normDni(dni);
+
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_PEDIDOS}!A:J`,
+  });
+
+  const values = r.data.values || [];
+  if (values.length < 2) return null;
+
+  const headers = values[0] || [];
+  const rows = values.slice(1);
+
+  let iId = findHeaderIndex(headers, ["IdPedido","IDPedido","Pedido"]);
+  let iDni = findHeaderIndex(headers, ["DNI","Documento"]);
+  let iV = findHeaderIndex(headers, ["Vianda","Producto","Item"]);
+  let iQ = findHeaderIndex(headers, ["Cantidad","Qty"]);
+  let iSub = findHeaderIndex(headers, ["Precio","Importe","Subtotal"]);
+  let iFP = findHeaderIndex(headers, ["FormaPago","Forma de pago","Pago"]);
+  let iTS = findHeaderIndex(headers, ["TimeStamp","Timestamp","Fecha"]);
+
+  // fallback fijo A:J
+  if (iId < 0) iId = 0;
+  if (iDni < 0) iDni = 1;
+  if (iV < 0) iV = 2;
+  if (iQ < 0) iQ = 3;
+  if (iSub < 0) iSub = 5;
+  if (iFP < 0) iFP = 6;
+  if (iTS < 0) iTS = 7;
+
+  // 1) encontrar el idPedido más reciente de HOY para ese DNI
+  let foundIndex = -1;
+  let idPedido = "";
+  let tsFound = "";
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i] || [];
+    if (normDni(row?.[iDni]) !== dniN) continue;
+
+    const ts = String(row?.[iTS] ?? "").trim();
+    const dt = new Date(ts);
+    if (!Number.isFinite(dt.getTime())) continue;
+
+    const dayKey = buenosAiresDayKey(dt);
+    if (dayKey !== today) continue;
+
+    idPedido = String(row?.[iId] ?? "").trim();
+    if (!idPedido) continue;
+
+    foundIndex = i;
+    tsFound = ts;
+    break;
+  }
+
+  if (foundIndex < 0 || !idPedido) return null;
+
+  // 2) juntar filas contiguas con ese idPedido
+  const items = [];
+  let total = 0;
+  let formaPago = "";
+
+  // hacia arriba
+  for (let i = foundIndex; i >= 0; i--) {
+    const row = rows[i] || [];
+    if (String(row?.[iId] ?? "").trim() !== idPedido) break;
+    if (normDni(row?.[iDni]) !== dniN) continue;
+
+    const nombre = String(row?.[iV] ?? "").trim();
+    const cantidad = parseInt(String(row?.[iQ] ?? "0"), 10) || 0;
+    const sub = toNumOrNull(row?.[iSub]) ?? 0;
+
+    if (!formaPago) formaPago = String(row?.[iFP] ?? "").trim();
+
+    if (nombre && cantidad > 0) {
+      const unit = cantidad ? Math.round(sub / cantidad) : sub;
+      items.unshift({ nombre, cantidad, precio: unit });
+      total += sub;
+    }
+  }
+  // hacia abajo
+  for (let i = foundIndex + 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    if (String(row?.[iId] ?? "").trim() !== idPedido) break;
+    if (normDni(row?.[iDni]) !== dniN) continue;
+
+    const nombre = String(row?.[iV] ?? "").trim();
+    const cantidad = parseInt(String(row?.[iQ] ?? "0"), 10) || 0;
+    const sub = toNumOrNull(row?.[iSub]) ?? 0;
+
+    if (!formaPago) formaPago = String(row?.[iFP] ?? "").trim();
+
+    if (nombre && cantidad > 0) {
+      const unit = cantidad ? Math.round(sub / cantidad) : sub;
+      items.push({ nombre, cantidad, precio: unit });
+      total += sub;
+    }
+  }
+
+  const fecha = tsFound
+    ? new Date(tsFound).toLocaleString("es-AR", { timeZone:"America/Argentina/Buenos_Aires" })
+    : new Date().toLocaleString("es-AR", { timeZone:"America/Argentina/Buenos_Aires" });
+
+  return { idPedido, items, total, fecha, formaPago: String(formaPago || "").trim() };
 }
 
 // ---------- Handler ----------
@@ -383,6 +526,7 @@ export default async function handler(req, res) {
       const formaPago = normalizeFormaPago(body.formaPago);
 
       const items = Array.isArray(body.items) ? body.items : [];
+
       // ✅ DNI 7 u 8 dígitos
       if (!/^\d{7,8}$/.test(dni) || !clave || !items.length) {
         return err(res, 400, "BAD_REQUEST");
@@ -394,6 +538,7 @@ export default async function handler(req, res) {
         return err(res, 429, "RATE_LIMIT", { retryAfterSeconds: blk.retryAfterSeconds || 60 });
       }
 
+      // --- validar cliente ---
       const rc = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_CLIENTES}!A:Z`,
@@ -440,71 +585,140 @@ export default async function handler(req, res) {
           message: "En tu zona ya cerró la toma de pedidos por hoy 🙂",
         });
       }
-
       const zonaMensaje = String(zInfo.mensaje || "").trim().slice(0, 400);
 
-      // catálogo (nombre + precio)
-      const rv = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_VIANDAS}!A:D`,
-      });
-      const rowsV = rv.data.values?.slice(1) || [];
-      const map = new Map();
-      for (const row of rowsV) {
-        if (!row || row.length < 4) continue;
-        const id = String(row[0]);
-        const precio = toNumOrNull(row[3]) ?? 0;
-        map.set(id, { nombre: row[1], precio });
+      // ✅ Anti-duplicados:
+      // - Si hay Upstash: lock atómico por DNI+día
+      // - Si no hay Upstash: chequeamos sheet (no es atómico, pero evita el 99% de duplicados)
+      let lockKey = null;
+
+      if (hasUpstash()) {
+        const lock = await acquireDniDayLock(dni);
+
+        if (!lock.ok) {
+          // Si ya existe pedido hoy, devolvemos el existente
+          const existing = await findExistingOrderTodayByDni(dni);
+
+          const payAlias = String(kv.PAY_ALIAS || "").trim();
+          const payNote = String(kv.PAY_NOTE || "").trim();
+
+          if (existing) {
+            return err(res, 409, "DNI_ALREADY_ORDERED", {
+              message: "Ese DNI ya tiene un pedido registrado hoy.",
+              existingOrder: {
+                idPedido: existing.idPedido,
+                items: existing.items,
+                total: existing.total,
+                fecha: existing.fecha,
+                formaPago: existing.formaPago || "",
+                zonaMensaje,
+                payAlias,
+                payNote,
+              },
+            });
+          }
+
+          // lockeado pero todavía no terminó de grabarse
+          return err(res, 409, "ORDER_PROCESSING", {
+            message: "Ya estamos procesando tu pedido. Esperá unos segundos 🙂",
+          });
+        }
+
+        lockKey = lock.key;
+      } else {
+        const existing = await findExistingOrderTodayByDni(dni);
+        if (existing) {
+          const payAlias = String(kv.PAY_ALIAS || "").trim();
+          const payNote = String(kv.PAY_NOTE || "").trim();
+
+          return err(res, 409, "DNI_ALREADY_ORDERED", {
+            message: "Ese DNI ya tiene un pedido registrado hoy.",
+            existingOrder: {
+              idPedido: existing.idPedido,
+              items: existing.items,
+              total: existing.total,
+              fecha: existing.fecha,
+              formaPago: existing.formaPago || "",
+              zonaMensaje,
+              payAlias,
+              payNote,
+            },
+          });
+        }
       }
 
-      const idPedido = await getNextIdPedido();
+      // ---- si llegamos acá, se puede crear pedido ----
+      try {
+        // catálogo (nombre + precio)
+        const rv = await sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${SHEET_VIANDAS}!A:D`,
+        });
+        const rowsV = rv.data.values?.slice(1) || [];
+        const map = new Map();
+        for (const row of rowsV) {
+          if (!row || row.length < 4) continue;
+          const id = String(row[0]);
+          const precio = toNumOrNull(row[3]) ?? 0;
+          map.set(id, { nombre: row[1], precio });
+        }
 
-      let total = 0;
-      const toAppend = [];
+        const idPedido = await getNextIdPedido();
 
-      for (const it of items) {
-        const id = String(it.idVianda || "");
-        let qty = parseInt(it.cantidad || 0, 10);
-        if (!id || !qty) continue;
+        let total = 0;
+        const toAppend = [];
 
-        qty = Math.max(0, Math.min(9, qty));
-        const v = map.get(id);
-        if (!v) continue;
+        for (const it of items) {
+          const id = String(it.idVianda || "");
+          let qty = parseInt(it.cantidad || 0, 10);
+          if (!id || !qty) continue;
 
-        const subtotal = v.precio * qty;
-        total += subtotal;
+          qty = Math.max(0, Math.min(9, qty));
+          const v = map.get(id);
+          if (!v) continue;
 
-        // A:J (10 cols) — mantenemos tu layout
-        toAppend.push([
-          idPedido,
-          String(dni),
-          v.nombre,
-          qty,
-          comentarios,
-          subtotal,
-          formaPago,
-          new Date().toISOString(),
-          ip,
-          ua,
-        ]);
+          const subtotal = v.precio * qty;
+          total += subtotal;
+
+          // A:J (10 cols)
+          toAppend.push([
+            idPedido,
+            String(dni),
+            v.nombre,
+            qty,
+            comentarios,
+            subtotal,
+            formaPago,
+            new Date().toISOString(),
+            ip,
+            ua,
+          ]);
+        }
+
+        if (!toAppend.length) return err(res, 400, "NO_ITEMS");
+
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${SHEET_PEDIDOS}!A:J`,
+          valueInputOption: "RAW",
+          requestBody: { values: toAppend },
+        });
+
+        await updateLastIdCell(idPedido);
+
+        // ✅ finalizamos lock guardando el idPedido (evita que el próximo lo meta de nuevo)
+        await finalizeDniDayLock(lockKey, idPedido);
+
+        // ✅ garantizamos alias/nota en la respuesta (evita "—" intermitente)
+        const payAlias = String(kv.PAY_ALIAS || "").trim();
+        const payNote = String(kv.PAY_NOTE || "").trim();
+
+        return ok(res, { idPedido, total, formaPago, zonaMensaje, payAlias, payNote });
+      } catch (e) {
+        // si falló en medio, liberamos lock (si había)
+        await releaseDniDayLock(lockKey);
+        throw e;
       }
-
-      if (!toAppend.length) return err(res, 400, "NO_ITEMS");
-
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_PEDIDOS}!A:J`,
-        valueInputOption: "RAW",
-        requestBody: { values: toAppend },
-      });
-
-      await updateLastIdCell(idPedido);
-
-      // ✅ garantizamos alias/nota en la respuesta (evita "—" intermitente)
-      const payAlias = String(kv.PAY_ALIAS || "").trim();
-      const payNote = String(kv.PAY_NOTE || "").trim();
-
-      return ok(res, { idPedido, total, formaPago, zonaMensaje, payAlias, payNote });
     }
 
     return err(res, 404, "ROUTE_NOT_FOUND");
