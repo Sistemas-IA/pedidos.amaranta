@@ -585,7 +585,7 @@
         resetAfterSend(false);
 
         if (ex?.idPedido && Array.isArray(ex.items)) {
-          toast("Ese DNI ya tiene un pedido cargado hoy. Te muestro el comprobante.", true);
+          toast("Este DNI ya tiene un pedido cargado hoy. Te comparto el comprobante.", true);
 
           openTicket({
             idPedido: ex.idPedido,
