@@ -48,11 +48,10 @@
   <div id="auth-sheet" class="hidden" aria-modal="true" role="dialog">
     <div class="sheet">
       <h3>Datos del cliente</h3>
-
       <div class="row">
         <div class="field" style="flex:1">
           <label for="dni">DNI</label>
-          <input id="dni" inputmode="numeric" pattern="\\d{8}" maxlength="8" placeholder="12345678" />
+          <input id="dni" inputmode="numeric" pattern="\\d{7,8}" maxlength="8" placeholder="1234567 / 12345678" />
         </div>
         <div class="field" style="flex:1">
           <label for="clave">Clave</label>
@@ -77,9 +76,8 @@
 
       <div class="field">
         <label for="comentarios">Comentarios</label>
-        <textarea id="comentarios" placeholder="Ej: hoy estoy en otra dirección..."></textarea>
+        <textarea id="comentarios" placeholder="Ej: sin sal, entregar 13:30"></textarea>
       </div>
-
       <div class="actions">
         <button id="btn-cancelar" class="btn cancel">Cancelar</button>
         <button id="btn-enviar" class="btn primary">Enviar</button>
@@ -97,20 +95,16 @@
             <div class="tkt-sub" id="tkt-sub">—</div>
           </div>
         </div>
-
         <div class="tkt-info">
           <div><strong>N° pedido:</strong> <span id="tkt-id">—</span></div>
           <div><strong>Fecha:</strong> <span id="tkt-date">—</span></div>
           <div><strong>Alias de pago:</strong> <span id="tkt-alias">—</span></div>
         </div>
-
         <div class="tkt-items" id="tkt-items"></div>
-
         <div class="tkt-total">
           <div>Total</div>
           <div id="tkt-total">$ 0</div>
         </div>
-
         <div class="tkt-note" id="tkt-note"></div>
       </div>
 
