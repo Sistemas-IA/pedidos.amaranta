@@ -47,6 +47,27 @@
     lastSendAt: 0,
   };
 
+  // ---- reset diario (evita "carrito de ayer") ----
+  const DAY_KEY = "amaranta:lastDay";
+  function todayKey(){
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,"0");
+    const day = String(d.getDate()).padStart(2,"0");
+    return `${y}-${m}-${day}`;
+  }
+  function ensureFreshDay(silent=false){
+    try{
+      const t = todayKey();
+      const last = localStorage.getItem(DAY_KEY);
+      if (last && last !== t){
+        resetAfterSend(true);
+        if (!silent) toast("Carrito reiniciado (nuevo día) ✓");
+      }
+      localStorage.setItem(DAY_KEY, t);
+    } catch {}
+  }
+
   async function fetchJsonSafe(url, opts = {}) {
     const headers = Object.assign({}, opts.headers || {});
     if (API_KEY) headers["X-API-Key"] = API_KEY;
@@ -379,6 +400,7 @@
   }
 
   function openSheet(){
+    ensureFreshDay(true);
     if (!state.formEnabled) {
       toast("Pedidos cerrados.");
       return;
@@ -403,7 +425,9 @@
   function openTicket(order){
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
-    els.tktAlias.textContent = state.config.PAY_ALIAS || "—";
+
+    // ✅ alias garantizado: primero lo que devuelve el backend, sino config, sino "—"
+    els.tktAlias.textContent = order.payAlias || state.config.PAY_ALIAS || "—";
 
     els.tktItems.innerHTML = "";
     order.items.forEach(it => {
@@ -424,14 +448,10 @@
 
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
 
-    // ✅ Mensaje: forma de pago + nota global + mensaje por zona (si viene)
-    const pm = order.formaPago || "Transferencia";
-    const note = (state.config.PAY_NOTE || "").trim();
-
+    const note = (order.payNote || state.config.PAY_NOTE || "").trim();
     const lines = [];
-    lines.push(`${pm}${note ? " — " + note : ""}`);
+    if (note) lines.push(note);
     if (order.zonaMensaje) lines.push(order.zonaMensaje);
-
     els.tktNote.textContent = lines.join("\n");
 
     els.tkt.classList.remove("hidden");
@@ -471,28 +491,14 @@
     setStatus("Cargando catálogo…");
     const data = await fetchJsonSafe(`${API}?route=viandas`);
     state.catalogo = Array.isArray(data.items) ? data.items.slice() : [];
-
-    const toNum = (v) => {
-      const s = String(v ?? "").trim().replace(",", ".");
-      if (!s) return null;
-      const n = Number(s);
-      return Number.isFinite(n) ? n : null;
-    };
-    state.catalogo.sort((a,b) => {
-      const ao = toNum(a.Orden);
-      const bo = toNum(b.Orden);
-      if (ao != null && bo != null && ao !== bo) return ao - bo;
-      if (ao != null && bo == null) return -1;
-      if (ao == null && bo != null) return 1;
-      return String(a.Nombre || "").localeCompare(String(b.Nombre || ""), "es", { sensitivity:"base" });
-    });
-
     renderCatalogo();
     setStatus("Catálogo actualizado ✓");
   }
 
   async function enviarPedido(){
     try { await refreshConfigOnly(); } catch {}
+
+    ensureFreshDay(true);
 
     if (!state.formEnabled) {
       toast("Pedidos cerrados.");
@@ -504,7 +510,8 @@
     const comentarios = els.comentarios.value.trim();
     const formaPago = getFormaPagoSelected();
 
-    if (!/^\d{8}$/.test(dni) || dni.startsWith("0")) { toast("DNI inválido."); return; }
+    // ✅ DNI 7 u 8 dígitos
+    if (!/^\d{7,8}$/.test(dni)) { toast("DNI inválido."); return; }
     if (!clave) { toast("Ingresá tu clave."); return; }
 
     const cartItems = Array.from(state.cart.values());
@@ -539,6 +546,9 @@
       const formaPagoNice = data.formaPago || (formaPago === "efectivo" ? "Efectivo" : "Transferencia");
       const zonaMensaje = (data.zonaMensaje || "").toString().trim();
 
+      const payAlias = (data.payAlias || "").toString().trim();
+      const payNote  = (data.payNote  || "").toString().trim();
+
       resetAfterSend(false);
 
       const order = {
@@ -547,6 +557,8 @@
         total,
         formaPago: formaPagoNice,
         zonaMensaje,
+        payAlias,
+        payNote,
         fecha: new Date().toLocaleString("es-AR", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit", year:"2-digit" })
       };
 
@@ -558,10 +570,18 @@
         try { await refreshConfigOnly(); } catch {}
         return;
       }
-
-      // ✅ NUEVO: toast amigable si la zona está cerrada
       if (e.code === "ZONA_CERRADA") {
         toast("En tu zona ya cerró la toma de pedidos por hoy 🙂", true);
+        return;
+      }
+      if (e.code === "AUTH_FAIL") {
+        toast(state.config.MSG_AUTH_FAIL || "DNI o clave incorrectos.", true);
+        return;
+      }
+
+      // UX más amable si viene un HTTP crudo
+      if (String(e.code || "").startsWith("HTTP_")) {
+        toast("No pudimos conectar. Probá recargar en unos segundos.", true);
         return;
       }
 
@@ -572,6 +592,7 @@
     }
   }
 
+  // Events
   els.btnConfirmar.addEventListener("click", openSheet);
   els.btnCancelar.addEventListener("click", closeSheet);
   els.btnEnviar.addEventListener("click", enviarPedido);
@@ -585,7 +606,13 @@
     if (!els.sheet.classList.contains("hidden")) closeSheet();
   });
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") ensureFreshDay(true);
+  });
+
+  // Boot
   (async function boot(){
+    ensureFreshDay(true);
     try {
       await refreshConfigOnly();
       if (state.formEnabled) await loadCatalogo();
@@ -593,8 +620,8 @@
       setStatus("Listo ✓");
     } catch (e) {
       console.error("BOOT ERROR:", e);
-      setStatus(`ERROR: ${e.message || "falló la carga"}`);
-      toast(`No cargó: ${e.message || "revisar API"}`, true);
+      setStatus("Sin conexión");
+      toast("No pudimos conectar. Probá recargar en unos segundos.", true);
     }
   })();
 
