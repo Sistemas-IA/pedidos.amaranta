@@ -12,12 +12,16 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "https://pedidos.amaranta.ar";
 const REQUIRED_API_KEY = process.env.API_KEY || "";
 
+// Si algún día querés reactivar bloqueo, poné DNI_BLOCK_ENABLED="true"
+const DNI_BLOCK_ENABLED = String(process.env.DNI_BLOCK_ENABLED || "false").toLowerCase() === "true";
+
 const SHEET_VIANDAS = "Viandas";
 const SHEET_CLIENTES = "Clientes";
 const SHEET_PEDIDOS = "Pedidos";
 const SHEET_CONFIG = "Configuracion";
 const SHEET_ZONAS = "Zonas";
 
+// Guardamos último IdPedido en K1 (como venías usando)
 const LAST_ID_CELL = `${SHEET_PEDIDOS}!K1`;
 
 const UP_URL = (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/+$/, "");
@@ -81,7 +85,6 @@ function normalizeImage(u) {
   if (m) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
   return u;
 }
-
 function normStr(s) {
   return String(s ?? "")
     .normalize("NFD")
@@ -90,7 +93,6 @@ function normStr(s) {
     .trim()
     .toLowerCase();
 }
-
 function findHeaderIndex(headers, candidates) {
   const H = (headers || []).map((h) => normStr(h));
   const C = candidates.map((c) => normStr(c));
@@ -106,29 +108,24 @@ function findHeaderIndex(headers, candidates) {
   }
   return -1;
 }
-
 function normDni(v) {
   return String(v ?? "").replace(/\D/g, "").trim();
 }
-
 function isValidadoStrict(v) {
   return normStr(v) === "validado";
 }
-
 function toNumOrNull(v) {
   const s = String(v ?? "").trim().replace(",", ".");
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
-
 function normalizeFormaPago(v) {
   const s = normStr(v);
   if (s === "efectivo") return "Efectivo";
   if (s === "transferencia") return "Transferencia";
   return "Transferencia";
 }
-
 function isTrueSheet(v) {
   return String(v ?? "").trim().toLowerCase() === "true";
 }
@@ -147,15 +144,13 @@ async function getZonaInfoByNombre(zonaNombre) {
     const headers = values[0] || [];
     const rows = values.slice(1);
 
-    // preferimos headers si existen
     let iZona = findHeaderIndex(headers, ["Zona"]);
     let iEstado = findHeaderIndex(headers, ["Estado"]);
     let iMensaje = findHeaderIndex(headers, ["Mensaje"]);
 
-    // fallback por si no hay headers reales
-    if (iZona < 0) iZona = 0;      // A
-    if (iEstado < 0) iEstado = 1;  // B
-    if (iMensaje < 0) iMensaje = 3; // D
+    if (iZona < 0) iZona = 0;       // A
+    if (iEstado < 0) iEstado = 1;   // B
+    if (iMensaje < 0) iMensaje = 3; // D (hoy D2:D)
 
     const target = normStr(zonaNombre);
 
@@ -175,7 +170,7 @@ async function getZonaInfoByNombre(zonaNombre) {
   }
 }
 
-// ---------- Upstash ----------
+// ---------- Upstash (solo para IdPedido; bloqueo DNI queda desactivado por defecto) ----------
 const hasUpstash = () => !!(UP_URL && UP_TOKEN);
 
 function upPath(cmd, ...parts) {
@@ -193,40 +188,17 @@ async function upGet(key) { return upCall("get", key); }
 async function upSet(key, value) { return upCall("set", key, value); }
 async function upIncr(key) { return upCall("incr", key); }
 
-const RL_DNI_FAILS = 5;
-const RL_DNI_WINDOW_SEC = 10 * 60;
-const RL_DNI_BLOCK_SEC = 15 * 60;
-
-function rlKeyBlockDni(dni){ return `rl:ped:block:dni:${dni}`; }
-function rlKeyFailDni(dni){ return `rl:ped:fail:dni:${dni}`; }
-
-async function upTtl(key){ return upCall("ttl", key); }
-async function upExpire(key, sec){ return upCall("expire", key, sec); }
-async function upSetEx(key, sec, value){ return upCall("setex", key, sec, value); }
-async function upDel(key){ return upCall("del", key); }
-
-async function checkBlockedDni(dni){
-  if (!hasUpstash()) return { blocked:false };
-  const k = rlKeyBlockDni(dni);
-  const v = await upGet(k);
-  if (v == null) return { blocked:false };
-  let ttl = Number(await upTtl(k));
-  if (!Number.isFinite(ttl) || ttl < 1) ttl = RL_DNI_BLOCK_SEC;
-  return { blocked:true, retryAfterSeconds: ttl };
+// (bloqueo DNI) — por defecto apagado
+async function checkBlockedDni(_dni){
+  if (!DNI_BLOCK_ENABLED) return { blocked:false };
+  // si algún día lo reactivás, acá ponés la lógica
+  return { blocked:false };
 }
-async function registerFailDni(dni){
-  if (!hasUpstash()) return;
-  const kFail = rlKeyFailDni(dni);
-  const n = Number(await upIncr(kFail));
-  await upExpire(kFail, RL_DNI_WINDOW_SEC);
-  if (n >= RL_DNI_FAILS) {
-    await upSetEx(rlKeyBlockDni(dni), RL_DNI_BLOCK_SEC, "1");
-    await upDel(kFail);
-  }
+async function registerFailDni(_dni){
+  if (!DNI_BLOCK_ENABLED) return;
 }
-async function clearFailDni(dni){
-  if (!hasUpstash()) return;
-  await upDel(rlKeyFailDni(dni));
+async function clearFailDni(_dni){
+  if (!DNI_BLOCK_ENABLED) return;
 }
 
 // ---------- IdPedido con fallback K1 ----------
@@ -243,7 +215,6 @@ async function readLastIdCell() {
     return null;
   }
 }
-
 async function updateLastIdCell(lastId) {
   try {
     await sheets.spreadsheets.values.update({
@@ -254,7 +225,6 @@ async function updateLastIdCell(lastId) {
     });
   } catch {}
 }
-
 async function readLastIdFromSheetA() {
   try {
     const r = await sheets.spreadsheets.values.get({
@@ -273,7 +243,6 @@ async function readLastIdFromSheetA() {
     return null;
   }
 }
-
 async function getNextIdPedido() {
   const key = "id:pedidos:last";
 
@@ -308,228 +277,239 @@ async function getNextIdPedido() {
 
 // ---------- Handler ----------
 export default async function handler(req, res) {
-  if (req.method === "OPTIONS") {
-    setCors(res);
-    return res.status(200).end();
-  }
-  if (!requireKey(req, res)) return;
+  try {
+    if (req.method === "OPTIONS") {
+      setCors(res);
+      return res.status(200).end();
+    }
+    if (!requireKey(req, res)) return;
 
-  const route = String(req.query.route || "").toLowerCase();
+    const route = String(req.query.route || "").toLowerCase();
 
-  if (req.method === "GET" && route === "ui-config") {
-    const kv = await readConfigKV();
-    return ok(res, {
-      FORM_ENABLED: String(kv.FORM_ENABLED ?? "true"),
-      FORM_CLOSED_TITLE: kv.FORM_CLOSED_TITLE ?? "Pedidos temporalmente cerrados",
-      FORM_CLOSED_MESSAGE: kv.FORM_CLOSED_MESSAGE ?? "Estamos atendiendo por WhatsApp.",
+    if (req.method === "GET" && route === "ui-config") {
+      const kv = await readConfigKV();
+      return ok(res, {
+        FORM_ENABLED: String(kv.FORM_ENABLED ?? "true"),
+        FORM_CLOSED_TITLE: kv.FORM_CLOSED_TITLE ?? "Pedidos temporalmente cerrados",
+        FORM_CLOSED_MESSAGE: kv.FORM_CLOSED_MESSAGE ?? "Estamos atendiendo por WhatsApp.",
 
-      THEME_PRIMARY: kv.THEME_PRIMARY ?? "",
-      THEME_SECONDARY: kv.THEME_SECONDARY ?? "",
-      THEME_BG: kv.THEME_BG ?? "",
-      THEME_TEXT: kv.THEME_TEXT ?? "",
-      RADIUS: kv.RADIUS ?? "16",
-      SPACING: kv.SPACING ?? "8",
+        THEME_PRIMARY: kv.THEME_PRIMARY ?? "",
+        THEME_SECONDARY: kv.THEME_SECONDARY ?? "",
+        THEME_BG: kv.THEME_BG ?? "",
+        THEME_TEXT: kv.THEME_TEXT ?? "",
+        RADIUS: kv.RADIUS ?? "16",
+        SPACING: kv.SPACING ?? "8",
 
-      ASSET_HEADER_URL: normalizeImage(kv.ASSET_HEADER_URL ?? ""),
-      ASSET_HEADER_DESKTOP_URL: normalizeImage(kv.ASSET_HEADER_DESKTOP_URL ?? ""),
+        ASSET_HEADER_URL: normalizeImage(kv.ASSET_HEADER_URL ?? ""),
+        ASSET_HEADER_DESKTOP_URL: normalizeImage(kv.ASSET_HEADER_DESKTOP_URL ?? ""),
 
-      ASSET_PLACEHOLDER_IMG_URL: normalizeImage(kv.ASSET_PLACEHOLDER_IMG_URL ?? ""),
-      ASSET_LOGO_URL: normalizeImage(kv.ASSET_LOGO_URL ?? ""),
+        ASSET_PLACEHOLDER_IMG_URL: normalizeImage(kv.ASSET_PLACEHOLDER_IMG_URL ?? ""),
+        ASSET_LOGO_URL: normalizeImage(kv.ASSET_LOGO_URL ?? ""),
 
-      UI_MAX_QTY_POR_VIANDA: kv.UI_MAX_QTY_POR_VIANDA ?? "9",
-      UI_RESUMEN_ITEMS_VISIBLES: kv.UI_RESUMEN_ITEMS_VISIBLES ?? "4",
+        UI_MAX_QTY_POR_VIANDA: kv.UI_MAX_QTY_POR_VIANDA ?? "9",
+        UI_RESUMEN_ITEMS_VISIBLES: kv.UI_RESUMEN_ITEMS_VISIBLES ?? "4",
 
-      MSG_EMPTY: kv.MSG_EMPTY ?? "No hay viandas disponibles por ahora.",
-      MSG_AUTH_FAIL: kv.MSG_AUTH_FAIL ?? "DNI o clave incorrectos o cliente no validado.",
-      MSG_LIMIT: kv.MSG_LIMIT ?? "Máximo 9 por vianda.",
-      MSG_SERVER_FAIL: kv.MSG_SERVER_FAIL ?? "No pudimos completar el pedido. Probá más tarde.",
+        MSG_EMPTY: kv.MSG_EMPTY ?? "No hay viandas disponibles por ahora.",
+        MSG_AUTH_FAIL: kv.MSG_AUTH_FAIL ?? "DNI o clave incorrectos o cliente no validado.",
+        MSG_LIMIT: kv.MSG_LIMIT ?? "Máximo 9 por vianda.",
+        MSG_SERVER_FAIL: kv.MSG_SERVER_FAIL ?? "No pudimos completar el pedido. Probá más tarde.",
 
-      WA_ENABLED: String(kv.WA_ENABLED ?? "true"),
-      WA_TEMPLATE: kv.WA_TEMPLATE ?? "",
-      WA_PHONE_TARGET: kv.WA_PHONE_TARGET ?? "",
+        WA_ENABLED: String(kv.WA_ENABLED ?? "true"),
+        WA_TEMPLATE: kv.WA_TEMPLATE ?? "",
+        WA_PHONE_TARGET: kv.WA_PHONE_TARGET ?? "",
 
-      PAY_ALIAS: kv.PAY_ALIAS ?? "",
-      PAY_NOTE: kv.PAY_NOTE ?? "",
-    });
-  }
-
-  if (req.method === "GET" && route === "viandas") {
-    const r = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_VIANDAS}!A:G`,
-    });
-
-    const values = r.data.values || [];
-    const items = [];
-
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i] || [];
-      const disponible = String(row[5]).toLowerCase() === "true";
-      if (!disponible) continue;
-
-      const precio = toNumOrNull(row[3]) ?? 0;
-
-      items.push({
-        IdVianda: row[0],
-        Nombre: row[1],
-        Descripcion: row[2],
-        Precio: precio,
-        Imagen: normalizeImage(row[4]),
-        Orden: row[6] ?? "",
+        PAY_ALIAS: kv.PAY_ALIAS ?? "",
+        PAY_NOTE: kv.PAY_NOTE ?? "",
       });
     }
 
-    items.sort((a, b) => {
-      const ao = toNumOrNull(a.Orden);
-      const bo = toNumOrNull(b.Orden);
-      if (ao != null && bo != null && ao !== bo) return ao - bo;
-      if (ao != null && bo == null) return -1;
-      if (ao == null && bo != null) return 1;
-      return String(a.Nombre || "").localeCompare(String(b.Nombre || ""), "es", { sensitivity: "base" });
-    });
-
-    return ok(res, { items });
-  }
-
-  if (req.method === "POST" && route === "pedido") {
-    const kv = await readConfigKV();
-    if (!isFormEnabled(kv)) {
-      return err(res, 403, "FORM_CLOSED");
-    }
-
-    const MAX_COMENT = 400, MAX_IP = 128, MAX_UA = 256;
-
-    const body = req.body || {};
-    const dni = normDni(body.dni);
-    const clave = String(body.clave || "").trim();
-
-    const ipHeader = (req.headers["x-forwarded-for"] ?? "").toString().split(",")[0] || req.socket?.remoteAddress || "";
-    const ip = normStr(body.ip || ipHeader || "").slice(0, MAX_IP);
-    const ua = (body.ua || req.headers["user-agent"] || "").toString().slice(0, MAX_UA);
-
-    let comentarios = (body.comentarios ?? "").toString();
-    comentarios = comentarios.replace(/\s+/g, " ").trim().slice(0, MAX_COMENT);
-
-    const formaPago = normalizeFormaPago(body.formaPago);
-
-    const items = Array.isArray(body.items) ? body.items : [];
-    if (!/^\d{8}$/.test(dni) || dni.startsWith("0") || !clave || !items.length) {
-      return err(res, 400, "BAD_REQUEST");
-    }
-
-    const blk = await checkBlockedDni(dni);
-    if (blk.blocked) {
-      return err(res, 429, "RATE_LIMIT", { retryAfterSeconds: blk.retryAfterSeconds });
-    }
-
-    const rc = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_CLIENTES}!A:Z`,
-    });
-
-    const valuesC = rc.data.values || [];
-    const headers = valuesC[0] || [];
-    const rowsC = valuesC.slice(1);
-
-    const iDNI = findHeaderIndex(headers, ["DNI", "Documento"]);
-    const iClave = findHeaderIndex(headers, ["Clave", "Password", "Pass"]);
-    const iEstado = findHeaderIndex(headers, ["Estado"]);
-    const iZona = findHeaderIndex(headers, ["Zona"]);
-
-    if (iDNI < 0 || iClave < 0) return err(res, 500, "CONFIG_ERROR");
-
-    const match = rowsC.find((r) => normDni(r?.[iDNI]) === dni);
-    const claveSheet = match ? String(match[iClave] ?? "").trim() : "";
-    const estadoSheet = match && iEstado >= 0 ? String(match[iEstado] ?? "") : "";
-    const okEstado = (iEstado < 0) ? true : isValidadoStrict(estadoSheet);
-
-    if (!match || claveSheet !== clave || !okEstado) {
-      await registerFailDni(dni);
-      return err(res, 401, "AUTH_FAIL");
-    }
-
-    await clearFailDni(dni);
-
-    // ✅ NUEVO: validación de zona habilitada en pestaña Zonas
-    if (iZona < 0) {
-      return err(res, 500, "CONFIG_ERROR", { message: "Falta la columna Zona en Clientes." });
-    }
-    const zonaCliente = String(match?.[iZona] ?? "").trim();
-    if (!zonaCliente) {
-      return err(res, 403, "ZONA_NO_ASIGNADA", { message: "Tu zona no está asignada. Escribinos por WhatsApp." });
-    }
-
-    const zInfo = await getZonaInfoByNombre(zonaCliente);
-    if (!zInfo.found) {
-      return err(res, 403, "ZONA_NO_CONFIG", { message: "Tu zona no está configurada. Escribinos por WhatsApp." });
-    }
-    if (!zInfo.enabled) {
-      // ✅ lo que pediste: toast amigable cuando Estado de zona = FALSE
-      return err(res, 403, "ZONA_CERRADA", {
-        message: "En tu zona ya cerró la toma de pedidos por hoy 🙂",
+    if (req.method === "GET" && route === "viandas") {
+      const r = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${SHEET_VIANDAS}!A:G`,
       });
+
+      const values = r.data.values || [];
+      const items = [];
+
+      for (let i = 1; i < values.length; i++) {
+        const row = values[i] || [];
+        const disponible = String(row[5]).toLowerCase() === "true";
+        if (!disponible) continue;
+
+        const precio = toNumOrNull(row[3]) ?? 0;
+
+        items.push({
+          IdVianda: row[0],
+          Nombre: row[1],
+          Descripcion: row[2],
+          Precio: precio,
+          Imagen: normalizeImage(row[4]),
+          Orden: row[6] ?? "",
+        });
+      }
+
+      items.sort((a, b) => {
+        const ao = toNumOrNull(a.Orden);
+        const bo = toNumOrNull(b.Orden);
+        if (ao != null && bo != null && ao !== bo) return ao - bo;
+        if (ao != null && bo == null) return -1;
+        if (ao == null && bo != null) return 1;
+        return String(a.Nombre || "").localeCompare(String(b.Nombre || ""), "es", { sensitivity: "base" });
+      });
+
+      return ok(res, { items });
     }
 
-    const zonaMensaje = String(zInfo.mensaje || "").trim().slice(0, 400);
+    if (req.method === "POST" && route === "pedido") {
+      const kv = await readConfigKV();
+      if (!isFormEnabled(kv)) {
+        return err(res, 403, "FORM_CLOSED");
+      }
 
-    const rv = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_VIANDAS}!A:D`,
-    });
-    const rowsV = rv.data.values?.slice(1) || [];
-    const map = new Map();
-    for (const row of rowsV) {
-      if (!row || row.length < 4) continue;
-      const id = String(row[0]);
-      const precio = toNumOrNull(row[3]) ?? 0;
-      map.set(id, { nombre: row[1], precio });
+      const MAX_COMENT = 400, MAX_IP = 128, MAX_UA = 256;
+
+      const body = req.body || {};
+      const dni = normDni(body.dni);
+      const clave = String(body.clave || "").trim();
+
+      const ipHeader = (req.headers["x-forwarded-for"] ?? "").toString().split(",")[0] || req.socket?.remoteAddress || "";
+      const ip = normStr(body.ip || ipHeader || "").slice(0, MAX_IP);
+      const ua = (body.ua || req.headers["user-agent"] || "").toString().slice(0, MAX_UA);
+
+      let comentarios = (body.comentarios ?? "").toString();
+      comentarios = comentarios.replace(/\s+/g, " ").trim().slice(0, MAX_COMENT);
+
+      const formaPago = normalizeFormaPago(body.formaPago);
+
+      const items = Array.isArray(body.items) ? body.items : [];
+      // ✅ DNI 7 u 8 dígitos
+      if (!/^\d{7,8}$/.test(dni) || !clave || !items.length) {
+        return err(res, 400, "BAD_REQUEST");
+      }
+
+      // bloqueo DNI (apagado por defecto)
+      const blk = await checkBlockedDni(dni);
+      if (blk.blocked) {
+        return err(res, 429, "RATE_LIMIT", { retryAfterSeconds: blk.retryAfterSeconds || 60 });
+      }
+
+      const rc = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${SHEET_CLIENTES}!A:Z`,
+      });
+
+      const valuesC = rc.data.values || [];
+      const headers = valuesC[0] || [];
+      const rowsC = valuesC.slice(1);
+
+      const iDNI = findHeaderIndex(headers, ["DNI", "Documento"]);
+      const iClave = findHeaderIndex(headers, ["Clave", "Password", "Pass"]);
+      const iEstado = findHeaderIndex(headers, ["Estado"]);
+      const iZona = findHeaderIndex(headers, ["Zona"]);
+
+      if (iDNI < 0 || iClave < 0) return err(res, 500, "CONFIG_ERROR");
+
+      const match = rowsC.find((r) => normDni(r?.[iDNI]) === dni);
+      const claveSheet = match ? String(match[iClave] ?? "").trim() : "";
+      const estadoSheet = match && iEstado >= 0 ? String(match[iEstado] ?? "") : "";
+      const okEstado = (iEstado < 0) ? true : isValidadoStrict(estadoSheet);
+
+      if (!match || claveSheet !== clave || !okEstado) {
+        await registerFailDni(dni);
+        return err(res, 401, "AUTH_FAIL", { message: kv.MSG_AUTH_FAIL || "DNI o clave incorrectos." });
+      }
+
+      await clearFailDni(dni);
+
+      // ✅ validación de zona habilitada en pestaña Zonas
+      if (iZona < 0) {
+        return err(res, 500, "CONFIG_ERROR", { message: "Falta la columna Zona en Clientes." });
+      }
+      const zonaCliente = String(match?.[iZona] ?? "").trim();
+      if (!zonaCliente) {
+        return err(res, 403, "ZONA_NO_ASIGNADA", { message: "Tu zona no está asignada. Escribinos por WhatsApp." });
+      }
+
+      const zInfo = await getZonaInfoByNombre(zonaCliente);
+      if (!zInfo.found) {
+        return err(res, 403, "ZONA_NO_CONFIG", { message: "Tu zona no está configurada. Escribinos por WhatsApp." });
+      }
+      if (!zInfo.enabled) {
+        return err(res, 403, "ZONA_CERRADA", {
+          message: "En tu zona ya cerró la toma de pedidos por hoy 🙂",
+        });
+      }
+
+      const zonaMensaje = String(zInfo.mensaje || "").trim().slice(0, 400);
+
+      // catálogo (nombre + precio)
+      const rv = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${SHEET_VIANDAS}!A:D`,
+      });
+      const rowsV = rv.data.values?.slice(1) || [];
+      const map = new Map();
+      for (const row of rowsV) {
+        if (!row || row.length < 4) continue;
+        const id = String(row[0]);
+        const precio = toNumOrNull(row[3]) ?? 0;
+        map.set(id, { nombre: row[1], precio });
+      }
+
+      const idPedido = await getNextIdPedido();
+
+      let total = 0;
+      const toAppend = [];
+
+      for (const it of items) {
+        const id = String(it.idVianda || "");
+        let qty = parseInt(it.cantidad || 0, 10);
+        if (!id || !qty) continue;
+
+        qty = Math.max(0, Math.min(9, qty));
+        const v = map.get(id);
+        if (!v) continue;
+
+        const subtotal = v.precio * qty;
+        total += subtotal;
+
+        // A:J (10 cols) — mantenemos tu layout
+        toAppend.push([
+          idPedido,
+          String(dni),
+          v.nombre,
+          qty,
+          comentarios,
+          subtotal,
+          formaPago,
+          new Date().toISOString(),
+          ip,
+          ua,
+        ]);
+      }
+
+      if (!toAppend.length) return err(res, 400, "NO_ITEMS");
+
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${SHEET_PEDIDOS}!A:J`,
+        valueInputOption: "RAW",
+        requestBody: { values: toAppend },
+      });
+
+      await updateLastIdCell(idPedido);
+
+      // ✅ garantizamos alias/nota en la respuesta (evita "—" intermitente)
+      const payAlias = String(kv.PAY_ALIAS || "").trim();
+      const payNote = String(kv.PAY_NOTE || "").trim();
+
+      return ok(res, { idPedido, total, formaPago, zonaMensaje, payAlias, payNote });
     }
 
-    const idPedido = await getNextIdPedido();
-
-    let total = 0;
-    const toAppend = [];
-
-    for (const it of items) {
-      const id = String(it.idVianda || "");
-      let qty = parseInt(it.cantidad || 0, 10);
-      if (!id || !qty) continue;
-
-      qty = Math.max(0, Math.min(9, qty));
-      const v = map.get(id);
-      if (!v) continue;
-
-      const subtotal = v.precio * qty;
-      total += subtotal;
-
-      toAppend.push([
-        idPedido,
-        String(dni),
-        v.nombre,
-        qty,
-        comentarios,
-        subtotal,
-        formaPago,
-        new Date().toISOString(),
-        ip,
-        ua,
-      ]);
-    }
-
-    if (!toAppend.length) return err(res, 400, "NO_ITEMS");
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_PEDIDOS}!A:J`,
-      valueInputOption: "RAW",
-      requestBody: { values: toAppend },
-    });
-
-    await updateLastIdCell(idPedido);
-
-    // ✅ devolvemos el mensaje de zona para el ticket
-    return ok(res, { idPedido, total, formaPago, zonaMensaje });
+    return err(res, 404, "ROUTE_NOT_FOUND");
+  } catch (e) {
+    console.error("API ERROR:", e);
+    return err(res, 500, "SERVER_ERROR", { message: "Error interno. Probá de nuevo." });
   }
-
-  return err(res, 404, "ROUTE_NOT_FOUND");
 }
