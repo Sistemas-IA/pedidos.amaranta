@@ -88,6 +88,7 @@
       const e = new Error(`${msg}${hint}`);
       e.code = code;
       e.status = res.status;
+      e.data = json; // ✅ importante para leer existingOrder en duplicados
       throw e;
     }
 
@@ -426,7 +427,6 @@
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
 
-    // ✅ alias garantizado: primero lo que devuelve el backend, sino config, sino "—"
     els.tktAlias.textContent = order.payAlias || state.config.PAY_ALIAS || "—";
 
     els.tktItems.innerHTML = "";
@@ -510,7 +510,6 @@
     const comentarios = els.comentarios.value.trim();
     const formaPago = getFormaPagoSelected();
 
-    // ✅ DNI 7 u 8 dígitos
     if (!/^\d{7,8}$/.test(dni)) { toast("DNI inválido."); return; }
     if (!clave) { toast("Ingresá tu clave."); return; }
 
@@ -576,6 +575,37 @@
       }
       if (e.code === "AUTH_FAIL") {
         toast(state.config.MSG_AUTH_FAIL || "DNI o clave incorrectos.", true);
+        return;
+      }
+
+      // ✅ DUPLICADO: ya hay pedido para ese DNI hoy -> mostramos comprobante del existente
+      if (e.code === "DNI_ALREADY_ORDERED") {
+        const ex = e.data?.existingOrder;
+
+        resetAfterSend(false);
+
+        if (ex?.idPedido && Array.isArray(ex.items)) {
+          toast("Ese DNI ya tiene un pedido cargado hoy. Te muestro el comprobante.", true);
+
+          openTicket({
+            idPedido: ex.idPedido,
+            items: ex.items,
+            total: Number(ex.total || 0),
+            fecha: ex.fecha || new Date().toLocaleString("es-AR"),
+            formaPago: ex.formaPago || "—",
+            payAlias: ex.payAlias || state.config.PAY_ALIAS || "",
+            payNote: ex.payNote || state.config.PAY_NOTE || "",
+            zonaMensaje: ex.zonaMensaje || "",
+          });
+        } else {
+          toast("Ese DNI ya tiene un pedido registrado hoy. Si querés modificarlo, escribinos por WhatsApp.", true);
+        }
+        return;
+      }
+
+      // ✅ Procesando: la persona apretó varias veces
+      if (e.code === "ORDER_PROCESSING") {
+        toast("Ya estamos procesando tu pedido. Esperá un toque y revisá el ticket 🙂", true);
         return;
       }
 
