@@ -12,8 +12,12 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "https://pedidos.amaranta.ar";
 const REQUIRED_API_KEY = process.env.API_KEY || "";
 
-// Si algún día querés reactivar bloqueo, poné DNI_BLOCK_ENABLED="true"
-const DNI_BLOCK_ENABLED = String(process.env.DNI_BLOCK_ENABLED || "false").toLowerCase() === "true";
+// Bloqueo por DNI (para frenar brute force / claves equivocadas)
+// Por defecto: ACTIVADO. Podés apagarlo con DNI_BLOCK_ENABLED="false".
+const DNI_BLOCK_ENABLED = String(process.env.DNI_BLOCK_ENABLED || "true").toLowerCase() === "true";
+const DNI_FAIL_MAX = Number(process.env.DNI_FAIL_MAX || 15);                  // a partir de cuántos fails bloquea
+const DNI_FAIL_WINDOW_SECONDS = Number(process.env.DNI_FAIL_WINDOW_SECONDS || 1800); // ventana para contar fails (30 min)
+const DNI_BLOCK_SECONDS = Number(process.env.DNI_BLOCK_SECONDS || 900);       // bloqueo (15 min)
 
 const SHEET_VIANDAS = "Viandas";
 const SHEET_CLIENTES = "Clientes";
@@ -189,16 +193,51 @@ async function upSet(key, value, ...opts) { return upCall("set", key, value, ...
 async function upIncr(key) { return upCall("incr", key); }
 async function upDel(key) { return upCall("del", key); }
 
-// (bloqueo DNI) — por defecto apagado
-async function checkBlockedDni(_dni){
-  if (!DNI_BLOCK_ENABLED) return { blocked:false };
-  return { blocked:false };
+// helpers
+async function upExpire(key, seconds) { return upCall("expire", key, seconds); }
+async function upTtl(key) { return upCall("ttl", key); }
+
+// (bloqueo DNI) — cuenta intentos fallidos y bloquea
+function dniFailKey(dni){
+  return `authfail:v2:${buenosAiresDayKey()}:dni:${dni}`;
 }
-async function registerFailDni(_dni){
-  if (!DNI_BLOCK_ENABLED) return;
+function dniBlockKey(dni){
+  return `authblock:v2:${buenosAiresDayKey()}:dni:${dni}`;
 }
-async function clearFailDni(_dni){
-  if (!DNI_BLOCK_ENABLED) return;
+
+async function checkBlockedDni(dni){
+  if (!DNI_BLOCK_ENABLED || !hasUpstash()) return { blocked:false };
+  const k = dniBlockKey(dni);
+  const v = await upGet(k);
+  if (v == null) return { blocked:false };
+  let ttl = Number(await upTtl(k));
+  if (!Number.isFinite(ttl) || ttl <= 0) ttl = DNI_BLOCK_SECONDS;
+  return { blocked:true, retryAfterSeconds: ttl };
+}
+
+async function registerFailDni(dni){
+  if (!DNI_BLOCK_ENABLED || !hasUpstash()) return { blocked:false };
+  const k = dniFailKey(dni);
+  let n = Number(await upIncr(k));
+  if (n === 1) {
+    // ventana para contar intentos
+    await upExpire(k, DNI_FAIL_WINDOW_SECONDS);
+  }
+  if (!Number.isFinite(n)) n = DNI_FAIL_MAX; // por las dudas
+  if (n >= DNI_FAIL_MAX) {
+    const bk = dniBlockKey(dni);
+    await upSet(bk, "1", "EX", String(DNI_BLOCK_SECONDS));
+    let ttl = Number(await upTtl(bk));
+    if (!Number.isFinite(ttl) || ttl <= 0) ttl = DNI_BLOCK_SECONDS;
+    return { blocked:true, retryAfterSeconds: ttl, attempts: n };
+  }
+  return { blocked:false, attempts: n };
+}
+
+async function clearFailDni(dni){
+  if (!DNI_BLOCK_ENABLED || !hasUpstash()) return;
+  await upDel(dniFailKey(dni));
+  await upDel(dniBlockKey(dni));
 }
 
 // ---------- IdPedido con fallback K1 ----------
@@ -290,20 +329,21 @@ async function acquireDniDayLock(dni){
   if (!hasUpstash()) return { ok:true, key:null };
 
   const day = buenosAiresDayKey();
-  const key = `order:${day}:dni:${dni}`;
+  // v2: así evitamos cualquier residuo de keys viejas
+  const key = `order:v2:${day}:dni:${dni}`;
 
   // SET key LOCKED EX 93600 NX (26h), atómico
-  const r = await upSet(key, "LOCKED", "EX", "93600", "NX");
+  const r = await upSet(key, `LOCKED|${dni}`, "EX", "93600", "NX");
   if (r === "OK") return { ok:true, key };
 
   const current = await upGet(key); // "LOCKED" o un idPedido ya finalizado
   return { ok:false, key, current };
 }
 
-async function finalizeDniDayLock(key, idPedido){
+async function finalizeDniDayLock(key, idPedido, dni){
   if (!key || !hasUpstash()) return;
   // Setea el idPedido conservando TTL
-  await upSet(key, String(idPedido), "XX", "KEEPTTL");
+  await upSet(key, `${String(idPedido)}|${String(dni)}`, "XX", "KEEPTTL");
 }
 
 async function releaseDniDayLock(key){
@@ -415,7 +455,7 @@ async function findExistingOrderTodayByDni(dni){
     ? new Date(tsFound).toLocaleString("es-AR", { timeZone:"America/Argentina/Buenos_Aires" })
     : new Date().toLocaleString("es-AR", { timeZone:"America/Argentina/Buenos_Aires" });
 
-  return { idPedido, items, total, fecha, formaPago: String(formaPago || "").trim() };
+  return { dni: dniN, idPedido, items, total, fecha, formaPago: String(formaPago || "").trim() };
 }
 
 // ---------- Handler ----------
@@ -532,10 +572,10 @@ export default async function handler(req, res) {
         return err(res, 400, "BAD_REQUEST");
       }
 
-      // bloqueo DNI (apagado por defecto)
+      // Bloqueo DNI (para frenar brute force / insistencia)
       const blk = await checkBlockedDni(dni);
       if (blk.blocked) {
-        return err(res, 429, "RATE_LIMIT", { retryAfterSeconds: blk.retryAfterSeconds || 60 });
+        return err(res, 429, "DNI_BLOCKED", { retryAfterSeconds: blk.retryAfterSeconds || DNI_BLOCK_SECONDS });
       }
 
       // --- validar cliente ---
@@ -561,7 +601,13 @@ export default async function handler(req, res) {
       const okEstado = (iEstado < 0) ? true : isValidadoStrict(estadoSheet);
 
       if (!match || claveSheet !== clave || !okEstado) {
-        await registerFailDni(dni);
+        const f = await registerFailDni(dni);
+        if (f?.blocked) {
+          return err(res, 429, "DNI_BLOCKED", {
+            retryAfterSeconds: f.retryAfterSeconds || DNI_BLOCK_SECONDS,
+            message: "Demasiados intentos. Esperá un rato y probá de nuevo.",
+          });
+        }
         return err(res, 401, "AUTH_FAIL", { message: kv.MSG_AUTH_FAIL || "DNI o clave incorrectos." });
       }
 
@@ -606,6 +652,7 @@ export default async function handler(req, res) {
             return err(res, 409, "DNI_ALREADY_ORDERED", {
               message: "Ese DNI ya tiene un pedido registrado hoy.",
               existingOrder: {
+                dni: existing.dni,
                 idPedido: existing.idPedido,
                 items: existing.items,
                 total: existing.total,
@@ -625,6 +672,30 @@ export default async function handler(req, res) {
         }
 
         lockKey = lock.key;
+
+        // ✅ Compat/Blindaje: aunque hayamos tomado el lock, chequeamos la sheet
+        // por si ya había un pedido HOY para este DNI (p.ej. venías de una versión vieja sin v2).
+        const existingPre = await findExistingOrderTodayByDni(dni);
+        if (existingPre) {
+          const payAlias = String(kv.PAY_ALIAS || "").trim();
+          const payNote = String(kv.PAY_NOTE || "").trim();
+
+          await finalizeDniDayLock(lockKey, existingPre.idPedido, dni);
+          return err(res, 409, "DNI_ALREADY_ORDERED", {
+            message: "Ese DNI ya tiene un pedido registrado hoy.",
+            existingOrder: {
+              dni: existingPre.dni,
+              idPedido: existingPre.idPedido,
+              items: existingPre.items,
+              total: existingPre.total,
+              fecha: existingPre.fecha,
+              formaPago: existingPre.formaPago || "",
+              zonaMensaje,
+              payAlias,
+              payNote,
+            },
+          });
+        }
       } else {
         const existing = await findExistingOrderTodayByDni(dni);
         if (existing) {
@@ -634,6 +705,7 @@ export default async function handler(req, res) {
           return err(res, 409, "DNI_ALREADY_ORDERED", {
             message: "Ese DNI ya tiene un pedido registrado hoy.",
             existingOrder: {
+              dni: existing.dni,
               idPedido: existing.idPedido,
               items: existing.items,
               total: existing.total,
@@ -707,7 +779,7 @@ export default async function handler(req, res) {
         await updateLastIdCell(idPedido);
 
         // ✅ finalizamos lock guardando el idPedido (evita que el próximo lo meta de nuevo)
-        await finalizeDniDayLock(lockKey, idPedido);
+        await finalizeDniDayLock(lockKey, idPedido, dni);
 
         // ✅ garantizamos alias/nota en la respuesta (evita "—" intermitente)
         const payAlias = String(kv.PAY_ALIAS || "").trim();
