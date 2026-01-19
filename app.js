@@ -578,19 +578,23 @@
         return;
       }
 
-      if (e.code === "DNI_BLOCKED") {
+      // ✅ Bloqueo por demasiados intentos con el mismo DNI
+      if (e.code === "DNI_BLOCKED" || e.code === "RATE_LIMIT") {
         const sec = Number(e.data?.retryAfterSeconds || 0);
         const min = sec > 0 ? Math.ceil(sec / 60) : 15;
         toast(`Demasiados intentos. Esperá ${min} min y probá de nuevo 🙂`, true);
         return;
       }
 
+      // ✅ DUPLICADO: ya hay pedido para ese DNI hoy -> mostramos comprobante del existente
       if (e.code === "DNI_ALREADY_ORDERED") {
         const ex = e.data?.existingOrder;
 
-        const exDni = String(ex?.dni || "").replace(/\D/g, "");
-        if (exDni && exDni !== dni) {
-          toast("Algo no cerró con el comprobante. Recargá la página y probá de nuevo.", true);
+        // 🛡️ Blindaje: si por algún motivo el backend devolviera un ticket de OTRO DNI, no lo mostramos.
+        const dniReq = String(dni || "").replace(/\D/g, "");
+        const dniEx = String(ex?.dni || "").replace(/\D/g, "");
+        if (dniEx && dniReq && dniEx !== dniReq) {
+          toast("Hubo un cruce raro con el comprobante. Recargá la página y probá de nuevo.", true);
           return;
         }
 
@@ -615,11 +619,13 @@
         return;
       }
 
+      // ✅ Procesando: la persona apretó varias veces
       if (e.code === "ORDER_PROCESSING") {
         toast("Ya estamos procesando tu pedido. Esperá un toque y revisá el ticket 🙂", true);
         return;
       }
 
+      // UX más amable si viene un HTTP crudo
       if (String(e.code || "").startsWith("HTTP_")) {
         toast("No pudimos conectar. Probá recargar en unos segundos.", true);
         return;
@@ -632,6 +638,7 @@
     }
   }
 
+  // Events
   els.btnConfirmar.addEventListener("click", openSheet);
   els.btnCancelar.addEventListener("click", closeSheet);
   els.btnEnviar.addEventListener("click", enviarPedido);
@@ -649,6 +656,7 @@
     if (document.visibilityState === "visible") ensureFreshDay(true);
   });
 
+  // Boot
   (async function boot(){
     ensureFreshDay(true);
     try {
