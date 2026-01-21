@@ -55,6 +55,21 @@ const STORE_UA = String(process.env.STORE_UA || process.env.STORE_USER_AGENT || 
 
 const MIN_START_ID = 10001;
 
+// ✅ Operadores: DNIs que pueden cargar múltiples pedidos e ignorar zonas cerradas y bloqueo diario
+// Ej: OPERATOR_DNI_LIST="12345678,23456789"
+const OPERATOR_DNI_LIST = String(process.env.OPERATOR_DNI_LIST || "").trim();
+function isOperatorDni(dni) {
+  if (!OPERATOR_DNI_LIST) return false;
+  const d = String(dni || "").trim();
+  const set = new Set(
+    OPERATOR_DNI_LIST
+      .split(/[,\s;]+/g)
+      .map(x => x.trim())
+      .filter(Boolean)
+  );
+  return set.has(d);
+}
+
 // ---------- CORS / response ----------
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
@@ -749,44 +764,108 @@ export default async function handler(req, res) {
 
       await clearFailDni(dni);
 
-      // ✅ validación de zona habilitada en pestaña Zonas
-      if (iZona < 0) {
-        return err(res, 500, "CONFIG_ERROR", { message: "Falta la columna Zona en Clientes." });
-      }
-      const zonaCliente = String(match?.[iZona] ?? "").trim();
-      if (!zonaCliente) {
-        return err(res, 403, "ZONA_NO_ASIGNADA", { message: "Tu zona no está asignada. Escribinos por WhatsApp." });
+      // ✅ Operador (por env var OPERATOR_DNI_LIST): ignora zona cerrada y bloqueo diario
+      const isOperator = isOperatorDni(dni);
+      let zonaMensaje = "";
+
+      // ✅ validación de zona habilitada en pestaña Zonas (solo si NO es operador)
+      if (!isOperator) {
+        if (iZona < 0) {
+          return err(res, 500, "CONFIG_ERROR", { message: "Falta la columna Zona en Clientes." });
+        }
+        const zonaCliente = String(match?.[iZona] ?? "").trim();
+        if (!zonaCliente) {
+          return err(res, 403, "ZONA_NO_ASIGNADA", { message: "Tu zona no está asignada. Escribinos por WhatsApp." });
+        }
+
+        const zInfo = await getZonaInfoByNombre(zonaCliente);
+        if (!zInfo.found) {
+          return err(res, 403, "ZONA_NO_CONFIG", { message: "Tu zona no está configurada. Escribinos por WhatsApp." });
+        }
+        if (!zInfo.enabled) {
+          await logIntento({ dni, clave, evento: "ZONA_CERRADA", message: "Zona cerrada", ip, ua });
+          return err(res, 403, "ZONA_CERRADA", {
+            message: "En tu zona ya cerró la toma de pedidos por hoy 🙂",
+          });
+        }
+        zonaMensaje = String(zInfo.mensaje || "").trim().slice(0, 400);
+      } else {
+        // operador: no aplica zona cerrada
+        zonaMensaje = "";
       }
 
-      const zInfo = await getZonaInfoByNombre(zonaCliente);
-      if (!zInfo.found) {
-        return err(res, 403, "ZONA_NO_CONFIG", { message: "Tu zona no está configurada. Escribinos por WhatsApp." });
-      }
-      if (!zInfo.enabled) {
-        await logIntento({ dni, clave, evento: "ZONA_CERRADA", message: "Zona cerrada", ip, ua });
-        return err(res, 403, "ZONA_CERRADA", {
-          message: "En tu zona ya cerró la toma de pedidos por hoy 🙂",
-        });
-      }
-      const zonaMensaje = String(zInfo.mensaje || "").trim().slice(0, 400);
-
-      // ✅ Anti-duplicados:
-      // - Si hay Upstash: lock atómico por DNI+día
-      // - Si no hay Upstash: chequeamos sheet (no es atómico, pero evita el 99% de duplicados)
+      // ✅ Anti-duplicados (1 por día) — solo si NO es operador
       let lockKey = null;
 
-      if (hasUpstash()) {
-        const lock = await acquireDniDayLock(dni);
+      if (!isOperator) {
+        // - Si hay Upstash: lock atómico por DNI+día
+        // - Si no hay Upstash: chequeamos sheet (no es atómico, pero evita el 99% de duplicados)
+        if (hasUpstash()) {
+          const lock = await acquireDniDayLock(dni);
 
-        if (!lock.ok) {
-          // Si ya existe pedido hoy, devolvemos el existente
+          if (!lock.ok) {
+            // Si ya existe pedido hoy, devolvemos el existente
+            const existing = await findExistingOrderTodayByDni(dni);
+
+            const payAlias = String((kv.PAY_ALIAS || "") || DEFAULT_PAY_ALIAS || "").trim();
+            const payNote = String((kv.PAY_NOTE || "") || DEFAULT_PAY_NOTE || "").trim();
+
+            if (existing) {
+              await logIntento({ dni, clave, evento: "DNI_ALREADY_ORDERED", message: "Duplicado del día", ip, ua });
+              return err(res, 409, "DNI_ALREADY_ORDERED", {
+                message: "Ese DNI ya tiene un pedido registrado hoy.",
+                existingOrder: {
+                  dni: existing.dni,
+                  idPedido: existing.idPedido,
+                  items: existing.items,
+                  total: existing.total,
+                  fecha: existing.fecha,
+                  formaPago: existing.formaPago || "",
+                  zonaMensaje,
+                  payAlias,
+                  payNote,
+                },
+              });
+            }
+
+            // lockeado pero todavía no terminó de grabarse
+            await logIntento({ dni, clave, evento: "ORDER_PROCESSING", message: "Pedido en proceso (lock ya tomado)", ip, ua });
+            return err(res, 409, "ORDER_PROCESSING", {
+              message: "Ya estamos procesando tu pedido. Esperá unos segundos 🙂",
+            });
+          }
+
+          lockKey = lock.key;
+
+          // ✅ Compat/Blindaje: aunque hayamos tomado el lock, chequeamos la sheet
+          // por si ya había un pedido HOY para este DNI (p.ej. venías de una versión vieja sin v2).
+          const existingPre = await findExistingOrderTodayByDni(dni);
+          if (existingPre) {
+            const payAlias = String((kv.PAY_ALIAS || "") || DEFAULT_PAY_ALIAS || "").trim();
+            const payNote = String((kv.PAY_NOTE || "") || DEFAULT_PAY_NOTE || "").trim();
+
+            await finalizeDniDayLock(lockKey, existingPre.idPedido, dni);
+            return err(res, 409, "DNI_ALREADY_ORDERED", {
+              message: "Ese DNI ya tiene un pedido registrado hoy.",
+              existingOrder: {
+                dni: existingPre.dni,
+                idPedido: existingPre.idPedido,
+                items: existingPre.items,
+                total: existingPre.total,
+                fecha: existingPre.fecha,
+                formaPago: existingPre.formaPago || "",
+                zonaMensaje,
+                payAlias,
+                payNote,
+              },
+            });
+          }
+        } else {
           const existing = await findExistingOrderTodayByDni(dni);
-
-          const payAlias = String((kv.PAY_ALIAS || "") || DEFAULT_PAY_ALIAS || "").trim();
-          const payNote = String((kv.PAY_NOTE || "") || DEFAULT_PAY_NOTE || "").trim();
-
           if (existing) {
-            await logIntento({ dni, clave, evento: "DNI_ALREADY_ORDERED", message: "Duplicado del día", ip, ua });
+            const payAlias = String((kv.PAY_ALIAS || "") || DEFAULT_PAY_ALIAS || "").trim();
+            const payNote = String((kv.PAY_NOTE || "") || DEFAULT_PAY_NOTE || "").trim();
+
             return err(res, 409, "DNI_ALREADY_ORDERED", {
               message: "Ese DNI ya tiene un pedido registrado hoy.",
               existingOrder: {
@@ -802,59 +881,6 @@ export default async function handler(req, res) {
               },
             });
           }
-
-          // lockeado pero todavía no terminó de grabarse
-          await logIntento({ dni, clave, evento: "ORDER_PROCESSING", message: "Pedido en proceso (lock ya tomado)", ip, ua });
-          return err(res, 409, "ORDER_PROCESSING", {
-            message: "Ya estamos procesando tu pedido. Esperá unos segundos 🙂",
-          });
-        }
-
-        lockKey = lock.key;
-
-        // ✅ Compat/Blindaje: aunque hayamos tomado el lock, chequeamos la sheet
-        // por si ya había un pedido HOY para este DNI (p.ej. venías de una versión vieja sin v2).
-        const existingPre = await findExistingOrderTodayByDni(dni);
-        if (existingPre) {
-          const payAlias = String((kv.PAY_ALIAS || "") || DEFAULT_PAY_ALIAS || "").trim();
-          const payNote = String((kv.PAY_NOTE || "") || DEFAULT_PAY_NOTE || "").trim();
-
-          await finalizeDniDayLock(lockKey, existingPre.idPedido, dni);
-          return err(res, 409, "DNI_ALREADY_ORDERED", {
-            message: "Ese DNI ya tiene un pedido registrado hoy.",
-            existingOrder: {
-              dni: existingPre.dni,
-              idPedido: existingPre.idPedido,
-              items: existingPre.items,
-              total: existingPre.total,
-              fecha: existingPre.fecha,
-              formaPago: existingPre.formaPago || "",
-              zonaMensaje,
-              payAlias,
-              payNote,
-            },
-          });
-        }
-      } else {
-        const existing = await findExistingOrderTodayByDni(dni);
-        if (existing) {
-          const payAlias = String((kv.PAY_ALIAS || "") || DEFAULT_PAY_ALIAS || "").trim();
-          const payNote = String((kv.PAY_NOTE || "") || DEFAULT_PAY_NOTE || "").trim();
-
-          return err(res, 409, "DNI_ALREADY_ORDERED", {
-            message: "Ese DNI ya tiene un pedido registrado hoy.",
-            existingOrder: {
-              dni: existing.dni,
-              idPedido: existing.idPedido,
-              items: existing.items,
-              total: existing.total,
-              fecha: existing.fecha,
-              formaPago: existing.formaPago || "",
-              zonaMensaje,
-              payAlias,
-              payNote,
-            },
-          });
         }
       }
 
