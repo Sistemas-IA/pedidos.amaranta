@@ -29,15 +29,15 @@
     tkt: document.getElementById("ticket"),
     tktContent: document.getElementById("ticket-content"),
     tktLogo: document.getElementById("tkt-logo"),
+    tktSub: document.getElementById("tkt-sub"),
     tktId: document.getElementById("tkt-id"),
     tktDate: document.getElementById("tkt-date"),
-    tktSub: document.getElementById("tkt-sub"),
-    tktDni: document.getElementById("tkt-dni"),
     tktAlias: document.getElementById("tkt-alias"),
     tktItems: document.getElementById("tkt-items"),
     tktTotal: document.getElementById("tkt-total"),
     tktNote: document.getElementById("tkt-note"),
     tktSave: document.getElementById("tkt-save"),
+    tktPdf: document.getElementById("tkt-pdf"),
     tktClose: document.getElementById("tkt-close"),
     tktCopyAlias: document.getElementById("tkt-copy-alias"),
     tktZone: document.getElementById("tkt-zone"),
@@ -56,7 +56,11 @@
     cart: new Map(),
     cartTouchedAt: 0,
     lastSendAt: 0,
+    activeSendNonce: null,
   };
+
+  // ---- blindaje: timeout de envío (evita 'Enviando…' infinito) ----
+  const SEND_TIMEOUT_MS = 25000;
 
   // ---- reset diario (evita "carrito de ayer") ----
   const DAY_KEY = "amaranta:lastDay";
@@ -78,6 +82,8 @@
       localStorage.setItem(DAY_KEY, t);
     } catch {}
   }
+
+
 
   // ---- expiración de carrito (evita que quede cargado horas) ----
   const CART_KEY = "amaranta:cart:v1";
@@ -123,7 +129,6 @@
       clearCart(silent ? "" : "Carrito vencido. Armalo de nuevo 🙂");
     }
   }
-
   async function fetchJsonSafe(url, opts = {}) {
     const headers = Object.assign({}, opts.headers || {});
     if (API_KEY) headers["X-API-Key"] = API_KEY;
@@ -161,7 +166,7 @@
     if (els.status) els.status.textContent = msg;
     if (els.statusSide) els.statusSide.textContent = msg;
   }
-
+  
   let _toastTimer = null;
   function toast(msg, hold=false){
     if (!els.toast) return;
@@ -179,12 +184,10 @@
       els.toast.classList.remove("show");
     }, duration);
   }
-
   function fmtMoney(n){
     try { return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0); }
     catch { return String(n); }
   }
-
   function normalizeImageUrl(u){
     if (!u) return "";
     u = String(u).trim();
@@ -240,13 +243,6 @@
     const phone = raw.replace(/[^\d]/g, "");
     if (!phone) return;
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
-    window.open(url, "_blank");
-  }
-
-  // ✅ Guardar comprobante en WhatsApp del cliente (elige chat: "Mensaje a ti mismo", familia, etc.)
-  // No requiere WA_PHONE_TARGET y no pisa el portapapeles.
-  function openWhatsAppShare(msg){
-    const url = `https://wa.me/?text=${encodeURIComponent(String(msg || ""))}`;
     window.open(url, "_blank");
   }
 
@@ -366,6 +362,7 @@
     renderResumen();
 
     if (forceCloseTicket && els.tkt) els.tkt.classList.add("hidden");
+
   }
 
   function getFormaPagoSelected(){
@@ -536,51 +533,56 @@
     if (els.fpEfect) els.fpEfect.checked = false;
     if (close) closeSheet();
   }
-
   function closeTicket(){
     els.tkt.classList.add("hidden");
     resetAfterSend(false);
   }
 
+  function setAuthDisabled(disabled){
+    // Evita que el usuario cambie DNI/clave mientras el request está en vuelo
+    // (blindaje contra respuestas tardías que podrían mostrar un ticket equivocado).
+    const list = [
+      els.dni, els.clave, els.fpTransf, els.fpEfect, els.comentarios,
+      els.btnCancelar, els.btnEnviar
+    ];
+    for (const el of list) {
+      if (!el) continue;
+      el.disabled = !!disabled;
+    }
+  }
+
   function buildReceiptText(order){
     const lines = [];
-    lines.push("✅ Pedido confirmado!");
-    if (order?.dni) lines.push(`DNI: ${order.dni}`);
-    if (order?.idPedido) lines.push(`Pedido: ${order.idPedido}`);
-    if (order?.fecha) lines.push(`Fecha: ${order.fecha}`);
-
+    lines.push("Pedido confirmado ✅");
+    if (order.dni) lines.push(`DNI: ${order.dni}`);
+    lines.push(`N° Pedido: ${order.idPedido}`);
+    lines.push(`Fecha: ${order.fecha}`);
+    if (order.formaPago) lines.push(`Pago: ${order.formaPago}`);
+    if (order.zonaMensaje) lines.push(order.zonaMensaje);
+    if (order.payAlias) lines.push(`Alias: ${order.payAlias}`);
+    if (order.payNote) lines.push(String(order.payNote));
     lines.push("");
     lines.push("Detalle:");
-    (order?.items || []).forEach((it) => {
-      const sub = (Number(it?.precio) || 0) * (Number(it?.cantidad) || 0);
-      lines.push(`- ${it.cantidad}× ${it.nombre} ($ ${fmtMoney(sub)})`);
-    });
-
-    lines.push("");
-    lines.push(`Total: $ ${fmtMoney(order?.total || 0)}`);
-    if (order?.formaPago) lines.push(`Pago: ${order.formaPago}`);
-
-    const alias = String((order?.payAlias || state.config.PAY_ALIAS || "") ?? "").trim();
-    if (alias) lines.push(`Alias: ${alias}`);
-
-    const note = String((order?.payNote || state.config.PAY_NOTE || "") ?? "").trim();
-    if (note) lines.push(`Nota: ${note}`);
-
-    const z = String(order?.zonaMensaje || "").trim();
-    if (z) {
-      lines.push("");
-      lines.push(z);
+    for (const it of (order.items || [])) {
+      lines.push(`- ${it.cantidad}× ${it.nombre} ($ ${fmtMoney(it.precio * it.cantidad)})`);
     }
-
+    lines.push("");
+    lines.push(`Total: $ ${fmtMoney(order.total)}`);
     return lines.join("\n");
   }
 
+  function openWhatsAppText(text){
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank", "noopener");
+  }
+
   function openTicket(order){
+    if (els.tktSub) {
+      const dniLine = order.dni ? `DNI: ${order.dni}` : "";
+      els.tktSub.textContent = dniLine;
+    }
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
-
-    if (els.tktDni) els.tktDni.textContent = String(order.dni || "—");
-    if (els.tktSub) els.tktSub.textContent = order.dni ? `DNI: ${order.dni}` : "—";
 
     const alias = String((order.payAlias || state.config.PAY_ALIAS || "—") ?? "—").trim() || "—";
     els.tktAlias.textContent = alias;
@@ -606,7 +608,6 @@
         els.tktZone.classList.add("hidden");
       }
     }
-
     els.tktItems.innerHTML = "";
     order.items.forEach(it => {
       const row = document.createElement("div");
@@ -632,16 +633,27 @@
     els.tkt.classList.remove("hidden");
     if (els.tktClose) els.tktClose.onclick = closeTicket;
 
-    // ✅ Guardar en WhatsApp (no se copia nada al portapapeles)
-    els.tktSave.onclick = () => {
-      try {
-        const msg = buildReceiptText(order);
-        openWhatsAppShare(msg);
-        toast("Abrí WhatsApp y enviátelo a vos mismo ✓");
-      } catch {
-        toast("No se pudo abrir WhatsApp");
-      }
-    };
+    if (els.tktSave) {
+      els.tktSave.onclick = () => {
+        try {
+          const txt = buildReceiptText(order);
+          openWhatsAppText(txt);
+          toast("Abriendo WhatsApp…");
+        } catch {
+          toast("No se pudo abrir WhatsApp");
+        }
+      };
+    }
+
+    if (els.tktPdf) {
+      els.tktPdf.onclick = () => {
+        try {
+          window.print();
+        } catch {
+          toast("No se pudo abrir 'Guardar PDF'");
+        }
+      };
+    }
   }
 
   async function loadCatalogo(){
@@ -657,6 +669,9 @@
 
     ensureFreshDay(true);
     checkCartExpiry(false);
+
+    // Blindaje: si ya hay un envío en curso, no disparamos otro
+    if (state.activeSendNonce) { toast("Ya estamos procesando tu pedido…", true); return; }
 
     if (!state.formEnabled) {
       toast("Pedidos cerrados.");
@@ -677,21 +692,42 @@
     if (Date.now() - state.lastSendAt < 1200) { toast("Pará un toque…"); return; }
     state.lastSendAt = Date.now();
 
-    els.btnEnviar.disabled = true;
+    const dniSent = dni;
+    const nonce = (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function")
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    state.activeSendNonce = nonce;
+
+    setAuthDisabled(true);
     els.btnEnviar.textContent = "Enviando…";
+
+    let controller = null;
+    let timeoutId = null;
 
     try {
       const payloadItems = cartItems.map(it => ({ idVianda: it.id, nombre: it.nombre, cantidad: it.cantidad }));
 
+      // Timeout opcional: evita que el envío quede colgado indefinidamente
+      if (typeof AbortController !== "undefined") {
+        controller = new AbortController();
+        timeoutId = setTimeout(() => {
+          try { controller.abort(); } catch {}
+        }, SEND_TIMEOUT_MS);
+      }
+
       const data = await fetchJsonSafe(`${API}?route=pedido`, {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
+        signal: controller ? controller.signal : undefined,
         body: JSON.stringify({
           dni, clave, comentarios,
           formaPago,
           items: payloadItems
         })
       });
+
+      // Blindaje: si llega una respuesta tarde de un envío anterior, la ignoramos.
+      if (state.activeSendNonce !== nonce) return;
 
       const id = data.idPedido;
       const totalServer = Number(data.total);
@@ -708,7 +744,7 @@
       resetAfterSend(false);
 
       const order = {
-        dni,
+        dni: dniSent,
         idPedido: id,
         items: cartItems.map(x => ({ nombre:x.nombre, cantidad:x.cantidad, precio:x.precio })),
         total,
@@ -722,6 +758,15 @@
       openTicket(order);
 
     } catch (e) {
+      if (state.activeSendNonce !== nonce) return;
+
+      // Timeout / abort (red lenta, se queda 'Enviando…')
+      if (e && (e.name === "AbortError" || e.code === "ABORTED")) {
+        toast("La conexión tardó demasiado. Probá de nuevo.", true);
+        resetSheetForm();
+        return;
+      }
+
       if (e.code === "FORM_CLOSED") {
         toast("Pedidos cerrados.", true);
         resetSheetForm();
@@ -776,8 +821,15 @@
       toast(state.config.MSG_SERVER_FAIL || `No pudimos completar el pedido (${e.message}).`, true);
       resetSheetForm();
     } finally {
-      els.btnEnviar.disabled = false;
-      els.btnEnviar.textContent = "Enviar";
+      if (timeoutId) { try { clearTimeout(timeoutId); } catch {} timeoutId = null; }
+
+      // Solo re-habilitamos si este envío sigue siendo el "activo".
+      if (state.activeSendNonce === nonce) {
+        state.activeSendNonce = null;
+        setAuthDisabled(false);
+        els.btnEnviar.disabled = false;
+        els.btnEnviar.textContent = "Enviar";
+      }
     }
   }
 
@@ -787,12 +839,16 @@
   els.btnEnviar.addEventListener("click", enviarPedido);
   if (els.alertClose) els.alertClose.addEventListener("click", closeAlertModal);
 
-  els.sheet.addEventListener("click", (e) => { if (e.target === els.sheet) closeSheet(); });
+  els.sheet.addEventListener("click", (e) => {
+    if (state.activeSendNonce) return;
+    if (e.target === els.sheet) closeSheet();
+  });
+  // Ticket NO se cierra tocando el fondo; solo con el botón "Cerrar".
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (els.alertModal && !els.alertModal.classList.contains("hidden")) return;
-    // Ticket: NO cerrar con Escape (queda fijo hasta "Cerrar")
+    if (state.activeSendNonce) return;
     if (!els.sheet.classList.contains("hidden")) closeSheet();
   });
 
@@ -830,7 +886,6 @@
   setInterval(() => {
     refreshConfigOnly().catch(() => {});
   }, 30000);
-
   setInterval(() => {
     checkCartExpiry(true);
   }, 30000);
