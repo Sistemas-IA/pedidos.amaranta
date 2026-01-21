@@ -31,6 +31,8 @@
     tktLogo: document.getElementById("tkt-logo"),
     tktId: document.getElementById("tkt-id"),
     tktDate: document.getElementById("tkt-date"),
+    tktSub: document.getElementById("tkt-sub"),
+    tktDni: document.getElementById("tkt-dni"),
     tktAlias: document.getElementById("tkt-alias"),
     tktItems: document.getElementById("tkt-items"),
     tktTotal: document.getElementById("tkt-total"),
@@ -77,8 +79,6 @@
     } catch {}
   }
 
-
-
   // ---- expiración de carrito (evita que quede cargado horas) ----
   const CART_KEY = "amaranta:cart:v1";
   const CART_TS_KEY = "amaranta:cart_ts:v1";
@@ -123,6 +123,7 @@
       clearCart(silent ? "" : "Carrito vencido. Armalo de nuevo 🙂");
     }
   }
+
   async function fetchJsonSafe(url, opts = {}) {
     const headers = Object.assign({}, opts.headers || {});
     if (API_KEY) headers["X-API-Key"] = API_KEY;
@@ -160,7 +161,7 @@
     if (els.status) els.status.textContent = msg;
     if (els.statusSide) els.statusSide.textContent = msg;
   }
-  
+
   let _toastTimer = null;
   function toast(msg, hold=false){
     if (!els.toast) return;
@@ -178,10 +179,12 @@
       els.toast.classList.remove("show");
     }, duration);
   }
+
   function fmtMoney(n){
     try { return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0); }
     catch { return String(n); }
   }
+
   function normalizeImageUrl(u){
     if (!u) return "";
     u = String(u).trim();
@@ -237,6 +240,13 @@
     const phone = raw.replace(/[^\d]/g, "");
     if (!phone) return;
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    window.open(url, "_blank");
+  }
+
+  // ✅ Guardar comprobante en WhatsApp del cliente (elige chat: "Mensaje a ti mismo", familia, etc.)
+  // No requiere WA_PHONE_TARGET y no pisa el portapapeles.
+  function openWhatsAppShare(msg){
+    const url = `https://wa.me/?text=${encodeURIComponent(String(msg || ""))}`;
     window.open(url, "_blank");
   }
 
@@ -356,7 +366,6 @@
     renderResumen();
 
     if (forceCloseTicket && els.tkt) els.tkt.classList.add("hidden");
-
   }
 
   function getFormaPagoSelected(){
@@ -527,25 +536,53 @@
     if (els.fpEfect) els.fpEfect.checked = false;
     if (close) closeSheet();
   }
+
   function closeTicket(){
     els.tkt.classList.add("hidden");
     resetAfterSend(false);
   }
 
-  async function waitForHtml2Canvas(){
-    const start = Date.now();
-    while (!window.html2canvas) {
-      await new Promise(r => setTimeout(r, 100));
-      if (Date.now() - start > 4000) break;
+  function buildReceiptText(order){
+    const lines = [];
+    lines.push("✅ Pedido confirmado!");
+    if (order?.dni) lines.push(`DNI: ${order.dni}`);
+    if (order?.idPedido) lines.push(`Pedido: ${order.idPedido}`);
+    if (order?.fecha) lines.push(`Fecha: ${order.fecha}`);
+
+    lines.push("");
+    lines.push("Detalle:");
+    (order?.items || []).forEach((it) => {
+      const sub = (Number(it?.precio) || 0) * (Number(it?.cantidad) || 0);
+      lines.push(`- ${it.cantidad}× ${it.nombre} ($ ${fmtMoney(sub)})`);
+    });
+
+    lines.push("");
+    lines.push(`Total: $ ${fmtMoney(order?.total || 0)}`);
+    if (order?.formaPago) lines.push(`Pago: ${order.formaPago}`);
+
+    const alias = String((order?.payAlias || state.config.PAY_ALIAS || "") ?? "").trim();
+    if (alias) lines.push(`Alias: ${alias}`);
+
+    const note = String((order?.payNote || state.config.PAY_NOTE || "") ?? "").trim();
+    if (note) lines.push(`Nota: ${note}`);
+
+    const z = String(order?.zonaMensaje || "").trim();
+    if (z) {
+      lines.push("");
+      lines.push(z);
     }
-    return !!window.html2canvas;
+
+    return lines.join("\n");
   }
 
   function openTicket(order){
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
 
-        const alias = String((order.payAlias || state.config.PAY_ALIAS || "—") ?? "—").trim() || "—";
+    if (els.tktDni) els.tktDni.textContent = String(order.dni || "—");
+    if (els.tktSub) els.tktSub.textContent = order.dni ? `DNI: ${order.dni}` : "—";
+
+    const alias = String((order.payAlias || state.config.PAY_ALIAS || "—") ?? "—").trim() || "—";
     els.tktAlias.textContent = alias;
 
     if (els.tktCopyAlias) {
@@ -569,6 +606,7 @@
         els.tktZone.classList.add("hidden");
       }
     }
+
     els.tktItems.innerHTML = "";
     order.items.forEach(it => {
       const row = document.createElement("div");
@@ -588,38 +626,20 @@
 
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
 
-        const note = (order.payNote || state.config.PAY_NOTE || "").trim();
+    const note = (order.payNote || state.config.PAY_NOTE || "").trim();
     els.tktNote.textContent = note;
 
     els.tkt.classList.remove("hidden");
     if (els.tktClose) els.tktClose.onclick = closeTicket;
 
-    els.tktSave.onclick = async () => {
-      els.tktSave.disabled = true;
+    // ✅ Guardar en WhatsApp (no se copia nada al portapapeles)
+    els.tktSave.onclick = () => {
       try {
-        const ready = await waitForHtml2Canvas();
-        if (!ready) { toast("No se pudo preparar el comprobante"); return; }
-
-        const canvas = await window.html2canvas(els.tktContent, {
-          backgroundColor:"#ffffff",
-          scale:2,
-          useCORS:true,
-          allowTaint:false
-        });
-
-        const blob = await new Promise(r => canvas.toBlob(r, "image/png", 1));
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `pedido-${order.idPedido}.png`;
-        a.click();
-        URL.revokeObjectURL(url);
-
-        toast("Imagen descargada ✓");
+        const msg = buildReceiptText(order);
+        openWhatsAppShare(msg);
+        toast("Abrí WhatsApp y enviátelo a vos mismo ✓");
       } catch {
-        toast("No se pudo guardar el comprobante");
-      } finally {
-        els.tktSave.disabled = false;
+        toast("No se pudo abrir WhatsApp");
       }
     };
   }
@@ -688,6 +708,7 @@
       resetAfterSend(false);
 
       const order = {
+        dni,
         idPedido: id,
         items: cartItems.map(x => ({ nombre:x.nombre, cantidad:x.cantidad, precio:x.precio })),
         total,
@@ -704,18 +725,18 @@
       if (e.code === "FORM_CLOSED") {
         toast("Pedidos cerrados.", true);
         resetSheetForm();
-try { await refreshConfigOnly(); } catch {}
+        try { await refreshConfigOnly(); } catch {}
         return;
       }
       if (e.code === "ZONA_CERRADA") {
         toast("En tu zona ya cerró la toma de pedidos por hoy 🙂", true);
         resetSheetForm();
-return;
+        return;
       }
       if (e.code === "AUTH_FAIL") {
         toast(state.config.MSG_AUTH_FAIL || "DNI o clave incorrectos.", true);
         resetSheetForm();
-return;
+        return;
       }
 
       // ✅ Bloqueo por demasiados intentos con el mismo DNI
@@ -724,14 +745,14 @@ return;
         const min = sec > 0 ? Math.ceil(sec / 60) : 15;
         toast(`Demasiados intentos. Esperá ${min} min y probá de nuevo 🙂`, true);
         resetSheetForm();
-return;
+        return;
       }
 
       // ✅ DUPLICADO: ya hay pedido para ese DNI hoy -> no mostramos ticket (evita confusión)
       if (e.code === "DNI_ALREADY_ORDERED") {
         const msg = "Ya tenés un pedido en proceso o registrado hoy con este DNI.\n\nSi necesitás cambiarlo o consultar algo, escribinos por WhatsApp 🙂";
         const waMsg = `Hola! Quiero consultar/modificar un pedido. Me figura que ya tengo un pedido hoy. DNI: ${dni}`;
-openAlertModal({ title: "Ya tenés un pedido hoy", msg, waMsg });
+        openAlertModal({ title: "Ya tenés un pedido hoy", msg, waMsg });
         resetSheetForm();
         return;
       }
@@ -740,7 +761,7 @@ openAlertModal({ title: "Ya tenés un pedido hoy", msg, waMsg });
       if (e.code === "ORDER_PROCESSING") {
         const msg = "Ya estamos procesando tu pedido.\n\nEsperá unos segundos y revisá si te aparece el comprobante.\nSi no aparece, escribinos por WhatsApp.";
         const waMsg = `Hola! Intenté hacer un pedido y me figura "Procesando". DNI: ${dni}`;
-openAlertModal({ title: "Pedido en proceso", msg, waMsg });
+        openAlertModal({ title: "Pedido en proceso", msg, waMsg });
         resetSheetForm();
         return;
       }
@@ -749,12 +770,12 @@ openAlertModal({ title: "Pedido en proceso", msg, waMsg });
       if (String(e.code || "").startsWith("HTTP_")) {
         toast("No pudimos conectar. Probá recargar en unos segundos.", true);
         resetSheetForm();
-return;
+        return;
       }
 
       toast(state.config.MSG_SERVER_FAIL || `No pudimos completar el pedido (${e.message}).`, true);
       resetSheetForm();
-} finally {
+    } finally {
       els.btnEnviar.disabled = false;
       els.btnEnviar.textContent = "Enviar";
     }
@@ -767,12 +788,11 @@ return;
   if (els.alertClose) els.alertClose.addEventListener("click", closeAlertModal);
 
   els.sheet.addEventListener("click", (e) => { if (e.target === els.sheet) closeSheet(); });
-  els.tkt.addEventListener("click", (e) => { if (e.target === els.tkt) closeTicket(); });
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (els.alertModal && !els.alertModal.classList.contains("hidden")) return;
-    if (!els.tkt.classList.contains("hidden")) closeTicket();
+    // Ticket: NO cerrar con Escape (queda fijo hasta "Cerrar")
     if (!els.sheet.classList.contains("hidden")) closeSheet();
   });
 
@@ -810,6 +830,7 @@ return;
   setInterval(() => {
     refreshConfigOnly().catch(() => {});
   }, 30000);
+
   setInterval(() => {
     checkCartExpiry(true);
   }, 30000);
