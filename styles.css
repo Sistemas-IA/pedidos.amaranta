@@ -263,6 +263,7 @@ textarea{ min-height:70px; }
 .btn{ border:0; border-radius:10px; padding:10px 14px; cursor:pointer; }
 .btn.cancel{ background:#eee; }
 .btn.primary{ background:var(--primary); color:#fff; }
+.btn.soft{ background:#f3f6f3; }
 
 /* ===== Ticket ===== */
 #ticket{
@@ -305,9 +306,12 @@ textarea{ min-height:70px; }
   display:flex;
   flex-wrap:wrap;
   gap:8px;
-  justify-content:space-between;
+  justify-content:flex-end;
   margin-top:12px;
 }
+
+/* Mantiene "Cerrar" a la izquierda y el resto a la derecha */
+#tkt-close{ margin-right:auto; }
 
 /* ===== Closed ===== */
 #closed{
@@ -474,3 +478,31 @@ textarea{ min-height:70px; }
 }
 .modal h3{ margin:0 0 8px; font-size:18px; }
 .modal p{ margin:0 0 12px; color:#444; white-space:pre-line; }
+
+/* ===== Print (Guardar PDF) ===== */
+@media print{
+  header.hdr, main#app, main#closed, #auth-sheet, #toast, #alert-modal{ display:none !important; }
+
+  #ticket{ 
+    position:static !important;
+    inset:auto !important;
+    background:transparent !important;
+    padding:0 !important;
+    display:block !important;
+  }
+  #ticket.hidden{ display:block !important; }
+  .ticket{
+    max-width:100% !important;
+    width:100% !important;
+    border-radius:0 !important;
+    box-shadow:none !important;
+    padding:0 !important;
+  }
+  #ticket-content{
+    border:0 !important;
+    background:#fff !important;
+    border-radius:0 !important;
+    padding:0 !important;
+  }
+  .ticket-actions{ display:none !important; }
+}
