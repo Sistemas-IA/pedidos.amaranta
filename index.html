@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pedidos Amaranta</title>
+  <link rel="icon" href="/assets/favicon.ico" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="hdr">
+    <img id="header-img" alt="Encabezado Amaranta" />
+    <div class="wrap mini">
+      <div id="conn-status">Cargando…</div>
+    </div>
+  </header>
+
+  <main id="closed" class="hidden">
+    <h2 id="closed-title">Pedidos temporalmente cerrados</h2>
+    <p id="closed-msg">Estamos atendiendo por WhatsApp. Volvé más tarde o escribinos.</p>
+    <button id="closed-wa" class="hidden btn primary">Escribir por WhatsApp</button>
+  </main>
+
+  <main id="app">
+    <section class="grid" id="catalogo"></section>
+
+    <section id="resumen">
+      <div class="sidehdr" aria-hidden="true">
+        <div class="sidehdr-img">
+          <img id="header-img-side" alt="Encabezado Amaranta" />
+        </div>
+        <div class="wrap mini">
+          <div id="conn-status-side">—</div>
+        </div>
+      </div>
+
+      <div class="resumen-pane">
+        <div id="resumen-list"></div>
+        <div class="bar">
+          <div class="total-label"><strong>Total</strong></div>
+          <div id="resumen-total" class="total-money">$ 0</div>
+          <button id="btn-confirmar" disabled>Confirmar pedido</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="auth-sheet" class="hidden" aria-modal="true" role="dialog">
+    <div class="sheet">
+      <h3>Datos del cliente</h3>
+      <div class="row">
+        <div class="field" style="flex:1">
+          <label for="dni">DNI</label>
+          <input id="dni" inputmode="numeric" pattern="\\d{7,8}" maxlength="8" placeholder="Tu DNI" />
+        </div>
+        <div class="field" style="flex:1">
+          <label for="clave">Clave</label>
+          <input id="clave" type="password" autocomplete="current-password" placeholder="Tu clave asignada" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Forma de pago</label>
+        <div class="row" style="gap:14px; align-items:center; flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" id="fp_transf" name="formaPago" value="transferencia" checked />
+            Transferencia
+          </label>
+
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" id="fp_efectivo" name="formaPago" value="efectivo" />
+            Efectivo
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="comentarios">Comentarios</label>
+        <textarea id="comentarios" placeholder="Ej: hoy estoy en otra dirección..."></textarea>
+      </div>
+      <div class="actions">
+        <button id="btn-cancelar" class="btn cancel">Cancelar</button>
+        <button id="btn-enviar" class="btn primary">Enviar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ticket" class="hidden" aria-modal="true" role="dialog">
+    <div class="ticket">
+      <div id="ticket-content">
+        <div class="tkt-head">
+          <img id="tkt-logo" alt="Amaranta" />
+          <div class="tkt-title">
+            <h3>✅ Pedido confirmado!</h3>
+            <div class="tkt-sub" id="tkt-sub">—</div>
+          </div>
+        </div>
+        <div class="tkt-info">
+          <div><strong>N° pedido:</strong> <span id="tkt-id">—</span></div>
+          <div><strong>Fecha:</strong> <span id="tkt-date">—</span></div>
+        </div>
+        <div class="tkt-pay">
+          <div class="tkt-pay-label">Alias de pago</div>
+          <div class="tkt-pay-row">
+            <span id="tkt-alias" class="tkt-alias">—</span>
+            <button id="tkt-copy-alias" class="btn tiny copy-alias">Copiar</button>
+          <div id="tkt-pay-hint" class="tkt-pay-hint"></div>
+          </div>
+        </div>
+        <div id="tkt-zone" class="tkt-zone hidden"></div>
+        <div class="tkt-items" id="tkt-items"></div>
+        <div class="tkt-total">
+          <div>Total</div>
+          <div id="tkt-total">$ 0</div>
+        </div>
+        <div class="tkt-note" id="tkt-note"></div>
+      </div>
+
+      <div class="ticket-actions">
+        <button id="tkt-close" class="btn cancel">Cerrar</button>
+        <button id="tkt-save" class="btn primary">Guardar en WhatsApp</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="alert-modal" class="hidden" aria-modal="true" role="dialog">
+    <div class="modal">
+      <h3 id="alert-title">—</h3>
+      <p id="alert-msg">—</p>
+      <div class="actions">
+        <button id="alert-close" class="btn cancel">Cerrar</button>
+        <button id="alert-wa" class="btn primary hidden">Escribir por WhatsApp</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script src="/config.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
