@@ -8,24 +8,30 @@
     headerImgSide: document.getElementById("header-img-side"),
     status: document.getElementById("conn-status"),
     statusSide: document.getElementById("conn-status-side"),
+
     catalogo: document.getElementById("catalogo"),
     resumenList: document.getElementById("resumen-list"),
     resumenTotal: document.getElementById("resumen-total"),
     btnConfirmar: document.getElementById("btn-confirmar"),
+
     sheet: document.getElementById("auth-sheet"),
     btnCancelar: document.getElementById("btn-cancelar"),
     btnEnviar: document.getElementById("btn-enviar"),
     dni: document.getElementById("dni"),
     clave: document.getElementById("clave"),
     comentarios: document.getElementById("comentarios"),
+
     toast: document.getElementById("toast"),
+
     closed: document.getElementById("closed"),
     closedTitle: document.getElementById("closed-title"),
     closedMsg: document.getElementById("closed-msg"),
     closedWA: document.getElementById("closed-wa"),
     app: document.getElementById("app"),
+
     fpTransf: document.getElementById("fp_transf"),
     fpEfect: document.getElementById("fp_efectivo"),
+
     tkt: document.getElementById("ticket"),
     tktContent: document.getElementById("ticket-content"),
     tktLogo: document.getElementById("tkt-logo"),
@@ -37,7 +43,6 @@
     tktTotal: document.getElementById("tkt-total"),
     tktNote: document.getElementById("tkt-note"),
     tktSave: document.getElementById("tkt-save"),
-    tktPdf: document.getElementById("tkt-pdf"), // Guardar ticket (imagen)
     tktClose: document.getElementById("tkt-close"),
     tktCopyAlias: document.getElementById("tkt-copy-alias"),
     tktZone: document.getElementById("tkt-zone"),
@@ -252,7 +257,6 @@
     const logoUrl = state.config.ASSET_LOGO_URL ? String(state.config.ASSET_LOGO_URL).trim() : "";
     if (els.tktLogo) {
       if (logoUrl) {
-        // Para evitar canvas "tainted" en Guardar ticket, lo ocultamos durante la captura
         els.tktLogo.crossOrigin = "anonymous";
         els.tktLogo.referrerPolicy = "no-referrer";
         els.tktLogo.src = logoUrl;
@@ -325,7 +329,7 @@
 
   // WhatsApp:
   // - Guardar en WhatsApp: wa.me/?text= (el usuario elige chat)
-  // - Escribir por WhatsApp: wa.me/<target>?text= (si hay WA_PHONE_TARGET)
+  // - Contacto: wa.me/<target>?text= (si hay WA_PHONE_TARGET)
   function openWhatsAppText(text){
     const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
     window.open(url, "_blank", "noopener");
@@ -594,7 +598,7 @@
     els.sheet.classList.remove("hidden");
   }
 
-  // ---- ticket (UI + acciones) ----
+  // ---- ticket ----
   function buildReceiptText(order){
     const lines = [];
     lines.push("Pedido confirmado ✅");
@@ -615,110 +619,9 @@
     return lines.join("\n");
   }
 
-  async function ensureHtml2Canvas(){
-    if (window.html2canvas) return true;
-
-    const loadScript = (src) => new Promise((resolve) => {
-      const s = document.createElement("script");
-      s.src = src;
-      s.async = true;
-      s.onload = () => resolve(true);
-      s.onerror = () => resolve(false);
-      document.head.appendChild(s);
-    });
-
-    // 1) Preferido: hostearlo vos en /vendor/html2canvas.min.js
-    const okLocal = await loadScript("/vendor/html2canvas.min.js");
-    if (okLocal && window.html2canvas) return true;
-
-    // 2) Fallback: CDN
-    const okCdn = await loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js");
-    return !!(okCdn && window.html2canvas);
-  }
-
-  function isIOS(){
-    const ua = navigator.userAgent || "";
-    return /iPhone|iPad|iPod/i.test(ua);
-  }
-
-  async function captureTicketBlob(){
-    const ok = await ensureHtml2Canvas();
-    if (!ok) throw new Error("CAPTURE_LIB_MISSING");
-
-    // Evitar canvas tainted: ocultamos el logo durante la captura
-    const logo = els.tktLogo;
-    const prevDisp = logo ? logo.style.display : "";
-    if (logo) logo.style.display = "none";
-
-    try {
-      const scale = Math.min(2, window.devicePixelRatio ? Math.max(1, window.devicePixelRatio) : 1.5);
-      const canvas = await window.html2canvas(els.tktContent, {
-        scale,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: null,
-        logging: false,
-      });
-
-      const blob = await new Promise((resolve) => {
-        if (!canvas.toBlob) return resolve(null);
-        canvas.toBlob((b) => resolve(b), "image/png", 0.95);
-      });
-
-      if (blob) return blob;
-
-      // Fallback a dataURL
-      const dataUrl = canvas.toDataURL("image/png");
-      const res = await fetch(dataUrl);
-      return await res.blob();
-    } finally {
-      if (logo) logo.style.display = prevDisp;
-    }
-  }
-
-  async function shareOrDownloadPng(blob, filename){
-    // 1) Web Share API con archivo (mejor UX en celular)
-    try {
-      const canShareFiles = !!(navigator.canShare && navigator.share && window.File);
-      if (canShareFiles) {
-        const file = new File([blob], filename, { type: "image/png" });
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            title: "Pedido Amaranta",
-            text: "Comprobante del pedido",
-            files: [file],
-          });
-          return { ok:true, method:"share" };
-        }
-      }
-    } catch {}
-
-    // 2) Descarga / apertura
-    const url = URL.createObjectURL(blob);
-
-    // iOS Safari: suele ignorar download => abrimos pestaña para guardar imagen
-    if (isIOS()) {
-      const w = window.open(url, "_blank", "noopener");
-      if (!w) throw new Error("POPUP_BLOCKED");
-      return { ok:true, method:"open" };
-    }
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.rel = "noopener";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-    return { ok:true, method:"download" };
-  }
-
   function openTicket(order){
-    if (els.tktSub) {
-      els.tktSub.textContent = order.dni ? `DNI: ${order.dni}` : "";
-    }
+    if (els.tktSub) els.tktSub.textContent = order.dni ? `DNI: ${order.dni}` : "";
+
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
 
@@ -765,11 +668,14 @@
     });
 
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
-    els.tktNote.textContent = (order.payNote || state.config.PAY_NOTE || "").trim();
+
+    const baseNote = (order.payNote || state.config.PAY_NOTE || "").trim();
+    const tip = "Tip: sacale una captura de pantalla para guardarlo.";
+    els.tktNote.textContent = baseNote ? `${baseNote}\n\n${tip}` : tip;
 
     els.tkt.classList.remove("hidden");
 
-    // persistimos ticket 5 min (blindaje refresh/cierre accidental)
+    // persistimos ticket 5 min (blindaje refresh)
     storeTicket(order);
 
     if (els.tktClose) els.tktClose.onclick = closeTicket;
@@ -784,51 +690,19 @@
         }
       };
     }
-
-    // Guardar ticket (imagen)
-    if (els.tktPdf) {
-      els.tktPdf.onclick = async () => {
-        const btn = els.tktPdf;
-        const prev = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = "Generando…";
-        try {
-          toast("Generando imagen…", true);
-          const blob = await captureTicketBlob();
-          const safeId = String(order.idPedido || "amaranta").replace(/[^\dA-Za-z_-]/g, "");
-          const filename = `pedido_${safeId}.png`;
-          const r = await shareOrDownloadPng(blob, filename);
-          if (r.method === "open" && isIOS()) {
-            toast("Se abrió el ticket: mantené apretado y 'Guardar imagen' 🙂", true);
-          } else {
-            toast("Ticket guardado ✓");
-          }
-        } catch (e) {
-          console.error(e);
-          if (String(e.message || "").includes("POPUP_BLOCKED")) {
-            toast("Permití ventanas emergentes para guardar el ticket 🙂", true);
-          } else if (String(e.message || "").includes("CAPTURE_LIB_MISSING")) {
-            toast("No se pudo generar la imagen (falta librería).", true);
-          } else {
-            toast("No se pudo guardar el ticket.", true);
-          }
-        } finally {
-          btn.disabled = false;
-          btn.textContent = prev;
-        }
-      };
-    }
   }
 
-  // ---- envío pedido (blindaje) ----
+  // ---- Enviar pedido (blindaje anti respuesta tardía) ----
   async function enviarPedido(){
     try { await refreshConfigOnly(); } catch {}
 
     ensureFreshDay(true);
     checkCartExpiry(false);
 
-    // Blindaje: si ya hay un envío en curso, no disparamos otro
-    if (state.activeSendNonce) { toast("Ya estamos procesando tu pedido…", true); return; }
+    if (state.activeSendNonce) {
+      toast("Ya estamos procesando tu pedido…", true);
+      return;
+    }
 
     if (!state.formEnabled) {
       toast("Pedidos cerrados.");
@@ -876,7 +750,6 @@
         body: JSON.stringify({ dni, clave, comentarios, formaPago, items: payloadItems })
       });
 
-      // Blindaje: respuesta tardía de envío anterior => ignorar
       if (state.activeSendNonce !== nonce) return;
 
       const id = data.idPedido;
@@ -954,7 +827,7 @@
         openAlertModal({
           title: "Pedido en proceso",
           msg: "Ya estamos procesando tu pedido.\n\nEsperá unos segundos y revisá si te aparece el comprobante.\nSi no aparece, escribinos por WhatsApp.",
-          waMsg: `Hola! Intenté hacer un pedido y me figura "Procesando". DNI: ${dni}`
+          waMsg: `Hola! Intenté hacer un pedido y me figura \"Procesando\". DNI: ${dni}`
         });
         resetSheetForm();
         return;
@@ -968,6 +841,7 @@
 
       toast(state.config.MSG_SERVER_FAIL || `No pudimos completar el pedido (${e.message}).`, true);
       resetSheetForm();
+
     } finally {
       if (timeoutId) { try { clearTimeout(timeoutId); } catch {} timeoutId = null; }
 
@@ -980,7 +854,7 @@
     }
   }
 
-  // ---- bootstrap ----
+  // ---- Eventos ----
   els.btnConfirmar.addEventListener("click", openSheet);
   els.btnCancelar.addEventListener("click", () => els.sheet.classList.add("hidden"));
   els.btnEnviar.addEventListener("click", enviarPedido);
@@ -992,7 +866,8 @@
     if (e.target === els.sheet) els.sheet.classList.add("hidden");
   });
 
-  // Ticket: NO se cierra tocando el fondo (solo botón "Cerrar").
+  // Ticket: NO se cierra tocando el fondo (solo botón "Cerrar")
+
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (els.alertModal && !els.alertModal.classList.contains("hidden")) return;
@@ -1012,13 +887,14 @@
     }
   });
 
+  // ---- Boot ----
   (async function boot(){
     clearStoredCart();
     ensureFreshDay(true);
     checkCartExpiry(false);
     renderResumen();
 
-    els.toast?.addEventListener("click", () => els.toast.classList.remove("show"));
+    if (els.toast) els.toast.addEventListener("click", () => els.toast.classList.remove("show"));
 
     try {
       await refreshConfigOnly();
@@ -1032,6 +908,7 @@
         openTicket(t);
         toast("Se restauró tu comprobante reciente ✓");
       }
+
     } catch (e) {
       console.error("BOOT ERROR:", e);
       setStatus("Sin conexión");
