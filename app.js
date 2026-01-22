@@ -37,7 +37,7 @@
     tktTotal: document.getElementById("tkt-total"),
     tktNote: document.getElementById("tkt-note"),
     tktSave: document.getElementById("tkt-save"),
-    tktPdf: document.getElementById("tkt-pdf"),
+    tktPdf: document.getElementById("tkt-pdf"), // Guardar ticket (imagen)
     tktClose: document.getElementById("tkt-close"),
     tktCopyAlias: document.getElementById("tkt-copy-alias"),
     tktZone: document.getElementById("tkt-zone"),
@@ -59,10 +59,10 @@
     activeSendNonce: null,
   };
 
-  // ---- blindaje: timeout de envío (evita 'Enviando…' infinito) ----
+  // ---- envío: timeout para evitar "Enviando…" infinito ----
   const SEND_TIMEOUT_MS = 25000;
 
-  // ---- reset diario (evita "carrito de ayer") ----
+  // ---- reset diario (evita carrito de ayer) ----
   const DAY_KEY = "amaranta:lastDay";
   function todayKey(){
     const d = new Date();
@@ -83,33 +83,24 @@
     } catch {}
   }
 
-
-
-  // ---- expiración de carrito (evita que quede cargado horas) ----
+  // ---- carrito NO persiste al refrescar ----
   const CART_KEY = "amaranta:cart:v1";
   const CART_TS_KEY = "amaranta:cart_ts:v1";
-
-  function getCartTtlMin(){
-    // Default pedido por Iván: 5 minutos
-    const v = Number(state.config.CART_TTL_MIN ?? 5);
-    return Number.isFinite(v) && v > 0 ? v : 5;
-  }
-
   function clearStoredCart(){
     try { localStorage.removeItem(CART_KEY); localStorage.removeItem(CART_TS_KEY); } catch {}
   }
-
-  // ⚠️ IMPORTANTE: Iván pidió que el carrito NO persista al refrescar.
-  // Por eso dejamos las keys solo para limpiar residuos de versiones anteriores,
-  // pero NO guardamos ni re-cargamos carrito desde storage.
   function saveCart(){ /* no-op */ }
   function loadCartIfFresh(){ /* no-op */ }
 
+  // ---- expiración de carrito (5 min) ----
+  function getCartTtlMin(){
+    const v = Number(state.config.CART_TTL_MIN ?? 5);
+    return Number.isFinite(v) && v > 0 ? v : 5;
+  }
   function touchCart(){
     state.cartTouchedAt = Date.now();
     saveCart();
   }
-
   function clearCart(reasonToast){
     if (state.cart.size === 0) return;
     state.cart.clear();
@@ -118,7 +109,6 @@
     renderResumen();
     if (reasonToast) toast(reasonToast);
   }
-
   function checkCartExpiry(silent=false){
     if (state.cart.size === 0) return;
     const ts = state.cartTouchedAt || 0;
@@ -129,6 +119,40 @@
       clearCart(silent ? "" : "Carrito vencido. Armalo de nuevo 🙂");
     }
   }
+
+  // ---- persistencia de ticket (5 min) ----
+  const TICKET_KEY = "amaranta:ticket:v1";
+  const TICKET_TTL_MS = 5 * 60 * 1000;
+
+  function clearStoredTicket(){
+    try { localStorage.removeItem(TICKET_KEY); } catch {}
+  }
+  function storeTicket(order){
+    try{
+      const payload = {
+        v: 1,
+        savedAt: Date.now(),
+        expiresAt: Date.now() + TICKET_TTL_MS,
+        order
+      };
+      localStorage.setItem(TICKET_KEY, JSON.stringify(payload));
+    } catch {}
+  }
+  function loadStoredTicket(){
+    try{
+      const raw = localStorage.getItem(TICKET_KEY);
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      if (!p || !p.order || !p.expiresAt) { clearStoredTicket(); return null; }
+      if (Date.now() > Number(p.expiresAt)) { clearStoredTicket(); return null; }
+      return p.order;
+    } catch {
+      clearStoredTicket();
+      return null;
+    }
+  }
+
+  // ---- fetch helper ----
   async function fetchJsonSafe(url, opts = {}) {
     const headers = Object.assign({}, opts.headers || {});
     if (API_KEY) headers["X-API-Key"] = API_KEY;
@@ -149,7 +173,7 @@
       const e = new Error(`${msg}${hint}`);
       e.code = code;
       e.status = res.status;
-      e.data = json; // ✅ importante para leer existingOrder en duplicados
+      e.data = json;
       throw e;
     }
 
@@ -162,16 +186,15 @@
     return json;
   }
 
+  // ---- UI helpers ----
   function setStatus(msg){
     if (els.status) els.status.textContent = msg;
     if (els.statusSide) els.statusSide.textContent = msg;
   }
-  
+
   let _toastTimer = null;
   function toast(msg, hold=false){
     if (!els.toast) return;
-
-    // compat: hold=true -> más tiempo, pero SIEMPRE se cierra solo
     let duration = 2600;
     if (typeof hold === "number") duration = hold;
     else if (hold === true) duration = 4200;
@@ -184,10 +207,12 @@
       els.toast.classList.remove("show");
     }, duration);
   }
+
   function fmtMoney(n){
     try { return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(n || 0); }
     catch { return String(n); }
   }
+
   function normalizeImageUrl(u){
     if (!u) return "";
     u = String(u).trim();
@@ -227,6 +252,7 @@
     const logoUrl = state.config.ASSET_LOGO_URL ? String(state.config.ASSET_LOGO_URL).trim() : "";
     if (els.tktLogo) {
       if (logoUrl) {
+        // Para evitar canvas "tainted" en Guardar ticket, lo ocultamos durante la captura
         els.tktLogo.crossOrigin = "anonymous";
         els.tktLogo.referrerPolicy = "no-referrer";
         els.tktLogo.src = logoUrl;
@@ -238,43 +264,12 @@
     }
   }
 
-  function openWhatsApp(msg){
-    const raw = String(state.config.WA_PHONE_TARGET || "").trim();
-    const phone = raw.replace(/[^\d]/g, "");
-    if (!phone) return;
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
-    window.open(url, "_blank");
-  }
-
   function applyCommentsPolicy(){
     const enabled = !!state.config.COMMENTS_ENABLED;
     const field = els.comentarios?.closest?.(".field");
     if (!field) return;
     field.style.display = enabled ? "flex" : "none";
     if (!enabled && els.comentarios) els.comentarios.value = "";
-  }
-
-  function openAlertModal({ title, msg, waMsg }){
-    if (!els.alertModal) return;
-    if (els.alertTitle) els.alertTitle.textContent = title || "Aviso";
-    if (els.alertMsg) els.alertMsg.textContent = msg || "";
-
-    const canWA = state.config.WA_ENABLED && String(state.config.WA_PHONE_TARGET || "").trim();
-    if (els.alertWA) {
-      if (canWA && waMsg) {
-        els.alertWA.classList.remove("hidden");
-        els.alertWA.onclick = () => openWhatsApp(waMsg);
-      } else {
-        els.alertWA.classList.add("hidden");
-        els.alertWA.onclick = null;
-      }
-    }
-    els.alertModal.classList.remove("hidden");
-  }
-
-  function closeAlertModal(){
-    if (!els.alertModal) return;
-    els.alertModal.classList.add("hidden");
   }
 
   function setClosedUI(isClosed){
@@ -291,7 +286,7 @@
         els.closedWA.classList.remove("hidden");
         els.closedWA.onclick = () => {
           const msg = `${els.closedTitle.textContent}\n${els.closedMsg.textContent}`;
-          openWhatsApp(msg);
+          openWhatsAppTarget(msg);
         };
       } else {
         els.closedWA.classList.add("hidden");
@@ -306,6 +301,44 @@
     }
   }
 
+  function openAlertModal({ title, msg, waMsg }){
+    if (!els.alertModal) return;
+    if (els.alertTitle) els.alertTitle.textContent = title || "Aviso";
+    if (els.alertMsg) els.alertMsg.textContent = msg || "";
+
+    const canWA = state.config.WA_ENABLED && String(state.config.WA_PHONE_TARGET || "").trim();
+    if (els.alertWA) {
+      if (canWA && waMsg) {
+        els.alertWA.classList.remove("hidden");
+        els.alertWA.onclick = () => openWhatsAppTarget(waMsg);
+      } else {
+        els.alertWA.classList.add("hidden");
+        els.alertWA.onclick = null;
+      }
+    }
+    els.alertModal.classList.remove("hidden");
+  }
+  function closeAlertModal(){
+    if (!els.alertModal) return;
+    els.alertModal.classList.add("hidden");
+  }
+
+  // WhatsApp:
+  // - Guardar en WhatsApp: wa.me/?text= (el usuario elige chat)
+  // - Escribir por WhatsApp: wa.me/<target>?text= (si hay WA_PHONE_TARGET)
+  function openWhatsAppText(text){
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank", "noopener");
+  }
+  function openWhatsAppTarget(text){
+    const raw = String(state.config.WA_PHONE_TARGET || "").trim();
+    const phone = raw.replace(/[^\d]/g, "");
+    if (!phone) return openWhatsAppText(text);
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank", "noopener");
+  }
+
+  // ---- config + catálogo ----
   async function refreshConfigOnly(){
     const conf = await fetchJsonSafe(`${API}?route=ui-config`);
     state.config = {
@@ -326,7 +359,6 @@
       FORM_CLOSED_MESSAGE: conf.FORM_CLOSED_MESSAGE,
       UI_RESUMEN_ITEMS_VISIBLES: Number(conf.UI_RESUMEN_ITEMS_VISIBLES || 4),
       UI_MAX_QTY_POR_VIANDA: Number(conf.UI_MAX_QTY_POR_VIANDA || 9),
-      // Default pedido por Iván: 5 minutos
       CART_TTL_MIN: Number(conf.CART_TTL_MIN || 5),
       MSG_EMPTY: conf.MSG_EMPTY,
       MSG_AUTH_FAIL: conf.MSG_AUTH_FAIL,
@@ -345,6 +377,15 @@
     setClosedUI(!state.config.FORM_ENABLED);
   }
 
+  async function loadCatalogo(){
+    setStatus("Cargando catálogo…");
+    const data = await fetchJsonSafe(`${API}?route=viandas`);
+    state.catalogo = Array.isArray(data.items) ? data.items.slice() : [];
+    renderCatalogo();
+    setStatus("Catálogo actualizado ✓");
+  }
+
+  // ---- estado / resets ----
   function resetAfterSend(forceCloseTicket=false){
     if (els.dni) els.dni.value = "";
     if (els.clave) els.clave.value = "";
@@ -362,7 +403,24 @@
     renderResumen();
 
     if (forceCloseTicket && els.tkt) els.tkt.classList.add("hidden");
+  }
 
+  function closeSheet(){ els.sheet.classList.add("hidden"); }
+
+  function resetSheetForm(opts={}){
+    const { close = true } = opts;
+    if (els.dni) els.dni.value = "";
+    if (els.clave) els.clave.value = "";
+    if (els.comentarios) els.comentarios.value = "";
+    if (els.fpTransf) els.fpTransf.checked = true;
+    if (els.fpEfect) els.fpEfect.checked = false;
+    if (close) closeSheet();
+  }
+
+  function closeTicket(){
+    els.tkt.classList.add("hidden");
+    clearStoredTicket();
+    resetAfterSend(false);
   }
 
   function getFormaPagoSelected(){
@@ -370,6 +428,18 @@
     return "transferencia";
   }
 
+  function setAuthDisabled(disabled){
+    const list = [
+      els.dni, els.clave, els.fpTransf, els.fpEfect, els.comentarios,
+      els.btnCancelar, els.btnEnviar
+    ];
+    for (const el of list) {
+      if (!el) continue;
+      el.disabled = !!disabled;
+    }
+  }
+
+  // ---- catálogo UI ----
   function buildControls(v, current){
     const frag = document.createDocumentFragment();
     if (current === 0) {
@@ -523,34 +593,8 @@
     }
     els.sheet.classList.remove("hidden");
   }
-  function closeSheet(){ els.sheet.classList.add("hidden"); }
-  function resetSheetForm(opts={}){
-    const { close = true } = opts;
-    if (els.dni) els.dni.value = "";
-    if (els.clave) els.clave.value = "";
-    if (els.comentarios) els.comentarios.value = "";
-    if (els.fpTransf) els.fpTransf.checked = true;
-    if (els.fpEfect) els.fpEfect.checked = false;
-    if (close) closeSheet();
-  }
-  function closeTicket(){
-    els.tkt.classList.add("hidden");
-    resetAfterSend(false);
-  }
 
-  function setAuthDisabled(disabled){
-    // Evita que el usuario cambie DNI/clave mientras el request está en vuelo
-    // (blindaje contra respuestas tardías que podrían mostrar un ticket equivocado).
-    const list = [
-      els.dni, els.clave, els.fpTransf, els.fpEfect, els.comentarios,
-      els.btnCancelar, els.btnEnviar
-    ];
-    for (const el of list) {
-      if (!el) continue;
-      el.disabled = !!disabled;
-    }
-  }
-
+  // ---- ticket (UI + acciones) ----
   function buildReceiptText(order){
     const lines = [];
     lines.push("Pedido confirmado ✅");
@@ -571,15 +615,109 @@
     return lines.join("\n");
   }
 
-  function openWhatsAppText(text){
-    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    window.open(url, "_blank", "noopener");
+  async function ensureHtml2Canvas(){
+    if (window.html2canvas) return true;
+
+    const loadScript = (src) => new Promise((resolve) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      s.onload = () => resolve(true);
+      s.onerror = () => resolve(false);
+      document.head.appendChild(s);
+    });
+
+    // 1) Preferido: hostearlo vos en /vendor/html2canvas.min.js
+    const okLocal = await loadScript("/vendor/html2canvas.min.js");
+    if (okLocal && window.html2canvas) return true;
+
+    // 2) Fallback: CDN
+    const okCdn = await loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js");
+    return !!(okCdn && window.html2canvas);
+  }
+
+  function isIOS(){
+    const ua = navigator.userAgent || "";
+    return /iPhone|iPad|iPod/i.test(ua);
+  }
+
+  async function captureTicketBlob(){
+    const ok = await ensureHtml2Canvas();
+    if (!ok) throw new Error("CAPTURE_LIB_MISSING");
+
+    // Evitar canvas tainted: ocultamos el logo durante la captura
+    const logo = els.tktLogo;
+    const prevDisp = logo ? logo.style.display : "";
+    if (logo) logo.style.display = "none";
+
+    try {
+      const scale = Math.min(2, window.devicePixelRatio ? Math.max(1, window.devicePixelRatio) : 1.5);
+      const canvas = await window.html2canvas(els.tktContent, {
+        scale,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: null,
+        logging: false,
+      });
+
+      const blob = await new Promise((resolve) => {
+        if (!canvas.toBlob) return resolve(null);
+        canvas.toBlob((b) => resolve(b), "image/png", 0.95);
+      });
+
+      if (blob) return blob;
+
+      // Fallback a dataURL
+      const dataUrl = canvas.toDataURL("image/png");
+      const res = await fetch(dataUrl);
+      return await res.blob();
+    } finally {
+      if (logo) logo.style.display = prevDisp;
+    }
+  }
+
+  async function shareOrDownloadPng(blob, filename){
+    // 1) Web Share API con archivo (mejor UX en celular)
+    try {
+      const canShareFiles = !!(navigator.canShare && navigator.share && window.File);
+      if (canShareFiles) {
+        const file = new File([blob], filename, { type: "image/png" });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: "Pedido Amaranta",
+            text: "Comprobante del pedido",
+            files: [file],
+          });
+          return { ok:true, method:"share" };
+        }
+      }
+    } catch {}
+
+    // 2) Descarga / apertura
+    const url = URL.createObjectURL(blob);
+
+    // iOS Safari: suele ignorar download => abrimos pestaña para guardar imagen
+    if (isIOS()) {
+      const w = window.open(url, "_blank", "noopener");
+      if (!w) throw new Error("POPUP_BLOCKED");
+      return { ok:true, method:"open" };
+    }
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return { ok:true, method:"download" };
   }
 
   function openTicket(order){
     if (els.tktSub) {
-      const dniLine = order.dni ? `DNI: ${order.dni}` : "";
-      els.tktSub.textContent = dniLine;
+      els.tktSub.textContent = order.dni ? `DNI: ${order.dni}` : "";
     }
     els.tktId.textContent = order.idPedido;
     els.tktDate.textContent = order.fecha;
@@ -608,8 +746,9 @@
         els.tktZone.classList.add("hidden");
       }
     }
+
     els.tktItems.innerHTML = "";
-    order.items.forEach(it => {
+    (order.items || []).forEach(it => {
       const row = document.createElement("div");
       row.className = "tkt-row";
 
@@ -626,18 +765,19 @@
     });
 
     els.tktTotal.textContent = "$ " + fmtMoney(order.total);
-
-    const note = (order.payNote || state.config.PAY_NOTE || "").trim();
-    els.tktNote.textContent = note;
+    els.tktNote.textContent = (order.payNote || state.config.PAY_NOTE || "").trim();
 
     els.tkt.classList.remove("hidden");
+
+    // persistimos ticket 5 min (blindaje refresh/cierre accidental)
+    storeTicket(order);
+
     if (els.tktClose) els.tktClose.onclick = closeTicket;
 
     if (els.tktSave) {
       els.tktSave.onclick = () => {
         try {
-          const txt = buildReceiptText(order);
-          openWhatsAppText(txt);
+          openWhatsAppText(buildReceiptText(order));
           toast("Abriendo WhatsApp…");
         } catch {
           toast("No se pudo abrir WhatsApp");
@@ -645,25 +785,42 @@
       };
     }
 
+    // Guardar ticket (imagen)
     if (els.tktPdf) {
-      els.tktPdf.onclick = () => {
+      els.tktPdf.onclick = async () => {
+        const btn = els.tktPdf;
+        const prev = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Generando…";
         try {
-          window.print();
-        } catch {
-          toast("No se pudo abrir 'Guardar PDF'");
+          toast("Generando imagen…", true);
+          const blob = await captureTicketBlob();
+          const safeId = String(order.idPedido || "amaranta").replace(/[^\dA-Za-z_-]/g, "");
+          const filename = `pedido_${safeId}.png`;
+          const r = await shareOrDownloadPng(blob, filename);
+          if (r.method === "open" && isIOS()) {
+            toast("Se abrió el ticket: mantené apretado y 'Guardar imagen' 🙂", true);
+          } else {
+            toast("Ticket guardado ✓");
+          }
+        } catch (e) {
+          console.error(e);
+          if (String(e.message || "").includes("POPUP_BLOCKED")) {
+            toast("Permití ventanas emergentes para guardar el ticket 🙂", true);
+          } else if (String(e.message || "").includes("CAPTURE_LIB_MISSING")) {
+            toast("No se pudo generar la imagen (falta librería).", true);
+          } else {
+            toast("No se pudo guardar el ticket.", true);
+          }
+        } finally {
+          btn.disabled = false;
+          btn.textContent = prev;
         }
       };
     }
   }
 
-  async function loadCatalogo(){
-    setStatus("Cargando catálogo…");
-    const data = await fetchJsonSafe(`${API}?route=viandas`);
-    state.catalogo = Array.isArray(data.items) ? data.items.slice() : [];
-    renderCatalogo();
-    setStatus("Catálogo actualizado ✓");
-  }
-
+  // ---- envío pedido (blindaje) ----
   async function enviarPedido(){
     try { await refreshConfigOnly(); } catch {}
 
@@ -683,7 +840,7 @@
     const comentarios = state.config.COMMENTS_ENABLED ? els.comentarios.value.trim() : "";
     const formaPago = getFormaPagoSelected();
 
-    if (!/^\d{7,8}$/.test(dni)) { toast("DNI inválido."); resetSheetForm({ close:false }); if (els.dni) els.dni.focus(); return; }
+    if (!/^\d{7,8}$/.test(dni)) { toast("DNI inválido."); resetSheetForm({ close:false }); els.dni?.focus?.(); return; }
     if (!clave) { toast("Ingresá tu clave."); if (els.clave) { els.clave.value = ""; els.clave.focus(); } return; }
 
     const cartItems = Array.from(state.cart.values());
@@ -707,26 +864,19 @@
     try {
       const payloadItems = cartItems.map(it => ({ idVianda: it.id, nombre: it.nombre, cantidad: it.cantidad }));
 
-      // Timeout opcional: evita que el envío quede colgado indefinidamente
       if (typeof AbortController !== "undefined") {
         controller = new AbortController();
-        timeoutId = setTimeout(() => {
-          try { controller.abort(); } catch {}
-        }, SEND_TIMEOUT_MS);
+        timeoutId = setTimeout(() => { try { controller.abort(); } catch {} }, SEND_TIMEOUT_MS);
       }
 
       const data = await fetchJsonSafe(`${API}?route=pedido`, {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         signal: controller ? controller.signal : undefined,
-        body: JSON.stringify({
-          dni, clave, comentarios,
-          formaPago,
-          items: payloadItems
-        })
+        body: JSON.stringify({ dni, clave, comentarios, formaPago, items: payloadItems })
       });
 
-      // Blindaje: si llega una respuesta tarde de un envío anterior, la ignoramos.
+      // Blindaje: respuesta tardía de envío anterior => ignorar
       if (state.activeSendNonce !== nonce) return;
 
       const id = data.idPedido;
@@ -737,7 +887,6 @@
 
       const formaPagoNice = data.formaPago || (formaPago === "efectivo" ? "Efectivo" : "Transferencia");
       const zonaMensaje = (data.zonaMensaje || "").toString().trim();
-
       const payAlias = (data.payAlias || "").toString().trim();
       const payNote  = (data.payNote  || "").toString().trim();
 
@@ -760,7 +909,6 @@
     } catch (e) {
       if (state.activeSendNonce !== nonce) return;
 
-      // Timeout / abort (red lenta, se queda 'Enviando…')
       if (e && (e.name === "AbortError" || e.code === "ABORTED")) {
         toast("La conexión tardó demasiado. Probá de nuevo.", true);
         resetSheetForm();
@@ -784,7 +932,6 @@
         return;
       }
 
-      // ✅ Bloqueo por demasiados intentos con el mismo DNI
       if (e.code === "DNI_BLOCKED" || e.code === "RATE_LIMIT") {
         const sec = Number(e.data?.retryAfterSeconds || 0);
         const min = sec > 0 ? Math.ceil(sec / 60) : 15;
@@ -793,25 +940,26 @@
         return;
       }
 
-      // ✅ DUPLICADO: ya hay pedido para ese DNI hoy -> no mostramos ticket (evita confusión)
       if (e.code === "DNI_ALREADY_ORDERED") {
-        const msg = "Ya tenés un pedido en proceso o registrado hoy con este DNI.\n\nSi necesitás cambiarlo o consultar algo, escribinos por WhatsApp 🙂";
-        const waMsg = `Hola! Quiero consultar/modificar un pedido. Me figura que ya tengo un pedido hoy. DNI: ${dni}`;
-        openAlertModal({ title: "Ya tenés un pedido hoy", msg, waMsg });
+        openAlertModal({
+          title: "Ya tenés un pedido hoy",
+          msg: "Ya tenés un pedido en proceso o registrado hoy con este DNI.\n\nSi necesitás cambiarlo o consultar algo, escribinos por WhatsApp 🙂",
+          waMsg: `Hola! Quiero consultar/modificar un pedido. Me figura que ya tengo un pedido hoy. DNI: ${dni}`
+        });
         resetSheetForm();
         return;
       }
 
-      // ✅ Procesando: la persona apretó varias veces / lock tomado
       if (e.code === "ORDER_PROCESSING") {
-        const msg = "Ya estamos procesando tu pedido.\n\nEsperá unos segundos y revisá si te aparece el comprobante.\nSi no aparece, escribinos por WhatsApp.";
-        const waMsg = `Hola! Intenté hacer un pedido y me figura "Procesando". DNI: ${dni}`;
-        openAlertModal({ title: "Pedido en proceso", msg, waMsg });
+        openAlertModal({
+          title: "Pedido en proceso",
+          msg: "Ya estamos procesando tu pedido.\n\nEsperá unos segundos y revisá si te aparece el comprobante.\nSi no aparece, escribinos por WhatsApp.",
+          waMsg: `Hola! Intenté hacer un pedido y me figura "Procesando". DNI: ${dni}`
+        });
         resetSheetForm();
         return;
       }
 
-      // UX más amable si viene un HTTP crudo
       if (String(e.code || "").startsWith("HTTP_")) {
         toast("No pudimos conectar. Probá recargar en unos segundos.", true);
         resetSheetForm();
@@ -823,7 +971,6 @@
     } finally {
       if (timeoutId) { try { clearTimeout(timeoutId); } catch {} timeoutId = null; }
 
-      // Solo re-habilitamos si este envío sigue siendo el "activo".
       if (state.activeSendNonce === nonce) {
         state.activeSendNonce = null;
         setAuthDisabled(false);
@@ -833,49 +980,58 @@
     }
   }
 
-  // Events
+  // ---- bootstrap ----
   els.btnConfirmar.addEventListener("click", openSheet);
-  els.btnCancelar.addEventListener("click", closeSheet);
+  els.btnCancelar.addEventListener("click", () => els.sheet.classList.add("hidden"));
   els.btnEnviar.addEventListener("click", enviarPedido);
-  if (els.alertClose) els.alertClose.addEventListener("click", closeAlertModal);
+  els.alertClose?.addEventListener("click", closeAlertModal);
 
+  // Sheet: se puede cerrar tocando el fondo SOLO si no está enviando
   els.sheet.addEventListener("click", (e) => {
     if (state.activeSendNonce) return;
-    if (e.target === els.sheet) closeSheet();
+    if (e.target === els.sheet) els.sheet.classList.add("hidden");
   });
-  // Ticket NO se cierra tocando el fondo; solo con el botón "Cerrar".
 
+  // Ticket: NO se cierra tocando el fondo (solo botón "Cerrar").
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (els.alertModal && !els.alertModal.classList.contains("hidden")) return;
     if (state.activeSendNonce) return;
-    if (!els.sheet.classList.contains("hidden")) closeSheet();
+    if (!els.sheet.classList.contains("hidden")) els.sheet.classList.add("hidden");
   });
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       ensureFreshDay(true);
       checkCartExpiry(false);
+      const t = loadStoredTicket();
+      if (t && els.tkt.classList.contains("hidden")) {
+        openTicket(t);
+        toast("Se restauró tu comprobante reciente ✓");
+      }
     }
   });
 
-  // Boot
   (async function boot(){
-    // Iván pidió que el carrito NO persista al refrescar
     clearStoredCart();
     ensureFreshDay(true);
     checkCartExpiry(false);
     renderResumen();
 
-    if (els.toast) {
-      els.toast.addEventListener("click", () => els.toast.classList.remove("show"));
-    }
+    els.toast?.addEventListener("click", () => els.toast.classList.remove("show"));
 
     try {
       await refreshConfigOnly();
       if (state.formEnabled) await loadCatalogo();
       renderResumen();
       setStatus("Listo ✓");
+
+      // Restaurar ticket si hubo refresh/cierre accidental (5 min)
+      const t = loadStoredTicket();
+      if (t) {
+        openTicket(t);
+        toast("Se restauró tu comprobante reciente ✓");
+      }
     } catch (e) {
       console.error("BOOT ERROR:", e);
       setStatus("Sin conexión");
@@ -883,10 +1039,7 @@
     }
   })();
 
-  setInterval(() => {
-    refreshConfigOnly().catch(() => {});
-  }, 30000);
-  setInterval(() => {
-    checkCartExpiry(true);
-  }, 30000);
+  // refrescos
+  setInterval(() => { refreshConfigOnly().catch(() => {}); }, 30000);
+  setInterval(() => { checkCartExpiry(true); }, 30000);
 })();
