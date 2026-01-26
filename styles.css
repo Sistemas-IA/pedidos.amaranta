@@ -9,6 +9,13 @@
 
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
+
+/* ✅ FIX QUIRÚRGICO: evita autosizing de texto en algunos móviles (causa recortes inconsistentes) */
+html{
+  -webkit-text-size-adjust:100%;
+  text-size-adjust:100%;
+}
+
 body{
   margin:0;
   font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif;
@@ -102,16 +109,25 @@ main{
   display:grid;
   grid-template-rows:auto auto auto;
   gap:8px;
-  min-height:0;
+
+  /* ✅ FIX QUIRÚRGICO: evita recorte por overflow:hidden de .card en algunos móviles */
+  min-height:auto;
+  min-width:0;
 }
 
 .card-title{
   font-size:17px;
   margin:0;
+
+  /* ✅ FIX QUIRÚRGICO: permite que el texto se ajuste dentro del contenedor */
+  overflow-wrap:anywhere;
 }
 .card-desc{
   font-size:12px;
   color:#555;
+
+  /* ✅ FIX QUIRÚRGICO: permite que el texto se ajuste dentro del contenedor */
+  overflow-wrap:anywhere;
 }
 
 /* bottom: precio arriba, selector debajo */
@@ -133,6 +149,9 @@ main{
   border-radius:999px;
   padding:4px 10px;
   width:max-content;
+
+  /* ✅ FIX QUIRÚRGICO: evita que el control empuje o quede recortado */
+  max-width:100%;
 }
 .qty button, .plus{
   border:0;
