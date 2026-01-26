@@ -10,7 +10,7 @@
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
 
-/* ✅ FIX QUIRÚRGICO: evita autosizing de texto en algunos móviles (causa recortes inconsistentes) */
+/* ✅ FIX: evita autosizing de texto en algunos móviles */
 html{
   -webkit-text-size-adjust:100%;
   text-size-adjust:100%;
@@ -83,7 +83,7 @@ main{
 }
 
 /* ===== Card (base) ===== */
-/* ✅ cambio pedido: foto ocupa 50% del ancho */
+/* ✅ 60/40 + permite encoger en móviles con Display size cambiado */
 .card{
   border:1px solid #e6e6e6;
   border-radius:var(--radius);
@@ -92,14 +92,17 @@ main{
 
   display:grid;
 
-  /* ✅ FIX QUIRÚRGICO: permite que las columnas del grid se ENCOJAN en móviles
-     (especialmente cuando Android cambia "tamaño de elementos en pantalla") */
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* 60% imagen / 40% texto, con minmax(0,...) para evitar recortes */
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
 
-  min-height:260px;              /* un toque más alto para que entre cómodo */
+  min-height:260px;
 }
 
-.card-img{ background:#f7f7f7; aspect-ratio:1/1; }
+/* ✅ imagen llena el alto: se elimina aspect-ratio */
+.card-img{
+  background:#f7f7f7;
+  height:100%;
+}
 .card-img img{
   width:100%;
   height:100%;
@@ -107,32 +110,26 @@ main{
   display:block;
 }
 
-/* ✅ cambio pedido: precio “sube” (sin empuje hacia el fondo) */
+/* ===== Texto + bottom ===== */
 .card-body{
   padding:10px;
   display:grid;
   grid-template-rows:auto auto auto;
   gap:8px;
 
-  /* ✅ FIX QUIRÚRGICO: evita recorte por overflow:hidden de .card en algunos móviles */
+  /* evita recortes raros dentro de grid */
   min-height:auto;
-
-  /* ✅ clave: deja que el contenido pueda encogerse dentro de una columna grid */
   min-width:0;
 }
 
 .card-title{
   font-size:17px;
   margin:0;
-
-  /* ✅ FIX QUIRÚRGICO: permite que el texto se ajuste dentro del contenedor */
   overflow-wrap:anywhere;
 }
 .card-desc{
   font-size:12px;
   color:#555;
-
-  /* ✅ FIX QUIRÚRGICO: permite que el texto se ajuste dentro del contenedor */
   overflow-wrap:anywhere;
 }
 
@@ -143,14 +140,11 @@ main{
   flex-direction:column;
   align-items:flex-end;
   gap:10px;
-
-  /* por si algún browser se pone quisquilloso con anchos mínimos */
   min-width:0;
 }
 
 .card-price{ font-weight:700; width:100%; text-align:right; }
 
-/* ✅ selector */
 .qty{
   display:inline-flex;
   gap:8px;
@@ -159,12 +153,12 @@ main{
   border-radius:999px;
   padding:4px 10px;
 
-  /* ✅ FIX QUIRÚRGICO: max-content puede empujar y generar overflow/recorte
-     cuando cambia "tamaño de elementos en pantalla" */
+  /* ✅ evita overflow/recorte con "tamaño de elementos" */
   width:fit-content;
   max-width:100%;
   flex-wrap:wrap;
 }
+
 .qty button, .plus{
   border:0;
   background:#f1f5f0;
