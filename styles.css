@@ -83,7 +83,6 @@ main{
 }
 
 /* ===== Card (base) ===== */
-/* ✅ 60/40 + permite encoger en móviles con Display size cambiado */
 .card{
   border:1px solid #e6e6e6;
   border-radius:var(--radius);
@@ -92,13 +91,13 @@ main{
 
   display:grid;
 
-  /* 60% imagen / 40% texto, con minmax(0,...) para evitar recortes */
+  /* ✅ 60/40 + permite encoger con Display size cambiado */
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
 
   min-height:260px;
 }
 
-/* ✅ imagen llena el alto: se elimina aspect-ratio */
+/* ✅ Opción 2: la imagen llena el alto y se recorta (cover) */
 .card-img{
   background:#f7f7f7;
   height:100%;
@@ -110,14 +109,12 @@ main{
   display:block;
 }
 
-/* ===== Texto + bottom ===== */
 .card-body{
   padding:10px;
   display:grid;
   grid-template-rows:auto auto auto;
   gap:8px;
 
-  /* evita recortes raros dentro de grid */
   min-height:auto;
   min-width:0;
 }
@@ -153,10 +150,12 @@ main{
   border-radius:999px;
   padding:4px 10px;
 
-  /* ✅ evita overflow/recorte con "tamaño de elementos" */
+  /* ✅ NO se parte en 2 líneas */
+  flex-wrap:nowrap;
+  white-space:nowrap;
+
   width:fit-content;
   max-width:100%;
-  flex-wrap:wrap;
 }
 
 .qty button, .plus{
@@ -174,6 +173,18 @@ main{
   display:inline-flex;
   align-items:center;
   justify-content:center;
+}
+
+/* ✅ compacta selector en pantallas chicas (o Display size grande) */
+@media (max-width: 420px){
+  .qty{ gap:6px; padding:3px 8px; }
+  .qty button, .plus{ padding:5px 8px; font-size:15px; }
+  .plus{ width:30px; height:30px; }
+}
+@media (max-width: 360px){
+  .qty{ gap:5px; padding:3px 7px; }
+  .qty button, .plus{ padding:4px 7px; font-size:14px; }
+  .plus{ width:28px; height:28px; }
 }
 
 /* Clamp de texto en desktop para que no “invada” el bottom */
