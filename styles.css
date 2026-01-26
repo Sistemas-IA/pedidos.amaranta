@@ -298,6 +298,19 @@ textarea{ resize:vertical; min-height:72px; }
 .btn.primary{ background:var(--primary); border-color:var(--primary); color:#fff; }
 .btn.cancel{ background:#fff; }
 
+/* ✅ FIX QUIRÚRGICO: DNI + Clave no desbordan y se apilan si no entra */
+#auth-sheet .row{
+  flex-wrap:wrap;          /* si no entra en 1 línea, baja */
+}
+#auth-sheet .row .field{
+  min-width:0;             /* permite encoger dentro del flex */
+  flex:1 1 240px;          /* 2 columnas si hay lugar, 1 columna si no */
+}
+#auth-sheet input{
+  width:100%;
+  min-width:0;
+}
+
 /* ===== Toast ===== */
 #toast{
   position:fixed;
