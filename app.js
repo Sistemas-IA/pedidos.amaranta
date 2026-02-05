@@ -723,7 +723,9 @@
     }
 
     const dni = els.dni.value.trim();
-    const clave = els.clave.value.trim();
+    const MAX_CLAVE_LEN = 12; // mismo número que pusiste en maxlength del index.html
+    let clave = els.clave.value.trim();
+    if (clave.length > MAX_CLAVE_LEN) clave = clave.slice(0, MAX_CLAVE_LEN);
     const comentarios = state.config.COMMENTS_ENABLED ? els.comentarios.value.trim() : "";
     const formaPago = getFormaPagoSelected();
 
