@@ -131,7 +131,7 @@ async function logIntento({ dni, clave, evento, attempts = "", blocked = "", mes
       tsBA,
       day,
       String(dni ?? ""),
-      String(clave ?? "").slice(0, 64), // ⚠️ pedido del usuario: texto plano
+      String(clave ?? "").slice(0, 12), // ⚠️ pedido del usuario: texto plano
       String(evento ?? ""),
       String(attempts ?? ""),
       String(blocked ?? ""),
