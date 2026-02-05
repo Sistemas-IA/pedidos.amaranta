@@ -298,6 +298,16 @@ textarea{ resize:vertical; min-height:72px; }
 .btn.primary{ background:var(--primary); border-color:var(--primary); color:#fff; }
 .btn.cancel{ background:#fff; }
 
+/* ✅ NUEVO (QUIRÚRGICO): link de registro debajo de Cancelar/Enviar */
+.register-link{
+  display:block;
+  margin-top:10px;
+  font-size:14px;
+  color:var(--secondary);
+  text-decoration:underline;
+}
+.register-link:active{ opacity:.7; }
+
 /* ✅ FIX QUIRÚRGICO: DNI + Clave no desbordan y se apilan si no entra */
 #auth-sheet .row{
   flex-wrap:wrap;          /* si no entra en 1 línea, baja */
