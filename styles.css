@@ -235,41 +235,37 @@ main{
   font-size:13px;
   padding:4px 0;
 }
+
+/* ✅ Barra inferior con selector integrado */
 #resumen .bar{
   display:flex;
   align-items:center;
   gap:12px;
-}
-.total-money{ margin-left:auto; font-weight:800; }
-#btn-confirmar{
-  border:0;
-  background:var(--primary);
-  color:#fff;
-  border-radius:999px;
-  padding:10px 14px;
-  font-weight:700;
-  cursor:pointer;
-}
-#btn-confirmar:disabled{
-  opacity:.5;
-  cursor:not-allowed;
+  flex-wrap:wrap;
 }
 
-/* ✅ Pago (selector en resumen) */
-.payselect{
-  margin-bottom:8px;
+.bar-pay{
+  flex:1 1 100%;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
 }
+
 .payselect-label{
   font-size:12px;
   color:#555;
-  margin-bottom:6px;
+  margin:0;
 }
+
 .payselect-row{
   display:flex;
   gap:14px;
   align-items:center;
   flex-wrap:wrap;
+  justify-content:flex-end;
 }
+
 .payopt{
   display:flex;
   align-items:center;
@@ -280,6 +276,31 @@ main{
   user-select:none;
 }
 
+.bar-total{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex:1 1 auto;
+}
+
+.total-money{
+  font-weight:800;
+}
+
+#btn-confirmar{
+  border:0;
+  background:var(--primary);
+  color:#fff;
+  border-radius:999px;
+  padding:10px 14px;
+  font-weight:700;
+  cursor:pointer;
+  margin-left:auto; /* en mobile empuja el botón a la derecha */
+}
+#btn-confirmar:disabled{
+  opacity:.5;
+  cursor:not-allowed;
+}
 
 /* ===== Auth sheet ===== */
 #auth-sheet{
@@ -486,6 +507,15 @@ textarea{ resize:vertical; min-height:72px; }
     border-bottom:1px solid #eee;
   }
 
+  /* ✅ QUIRÚRGICO: limita el alto del banner/logo del panel derecho */
+  .sidehdr-img{
+    max-height:150px;
+    overflow:hidden;
+  }
+  .sidehdr-img img{
+    max-height:150px;
+  }
+
   .wrap.mini{ padding:8px 16px; }
 
   .resumen-pane{
@@ -509,18 +539,29 @@ textarea{ resize:vertical; min-height:72px; }
     gap:4px;
   }
 
-  .payselect{
-    padding:10px 16px;
-    margin:0;
-    border-top:1px solid #eee;
-    background:#fff;
-  }
-
+  /* ✅ Barra: todo integrado + compacto */
   #resumen .bar{
     padding:10px 16px;
     border-top:1px solid #eee;
     background:#fff;
     flex:0 0 auto;
+
+    flex-wrap:nowrap;      /* evita que el selector se “coma” alto extra */
+    align-items:center;
+  }
+
+  .bar-pay{
+    flex:0 0 auto;         /* no ocupa una “fila” */
+    gap:10px;
+  }
+
+  .bar-total{
+    margin-left:auto;      /* empuja total + botón a la derecha */
+    flex:0 0 auto;
+  }
+
+  #btn-confirmar{
+    margin-left:12px;      /* en desktop no hace falta auto */
   }
 }
 
