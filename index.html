@@ -36,23 +36,29 @@
 
       <div class="resumen-pane">
         <div id="resumen-list"></div>
-        <div class="payselect">
-          <div class="payselect-label">Forma de pago</div>
-          <div class="payselect-row">
-            <label class="payopt">
-              <input type="radio" id="fp_transf" name="formaPago" value="transferencia" checked />
-              Transferencia
-            </label>
 
-            <label class="payopt">
-              <input type="radio" id="fp_efectivo" name="formaPago" value="efectivo" />
-              Efectivo
-            </label>
-          </div>
-        </div>
+        <!-- ✅ Selector de pago integrado en la barra (evita “ocupar una fila” extra en desktop) -->
         <div class="bar">
-          <div class="total-label"><strong>Total</strong></div>
-          <div id="resumen-total" class="total-money">$ 0</div>
+          <div class="bar-pay" aria-label="Forma de pago">
+            <div class="payselect-label">Forma de pago</div>
+            <div class="payselect-row">
+              <label class="payopt">
+                <input type="radio" id="fp_transf" name="formaPago" value="transferencia" checked />
+                Transferencia
+              </label>
+
+              <label class="payopt">
+                <input type="radio" id="fp_efectivo" name="formaPago" value="efectivo" />
+                Efectivo
+              </label>
+            </div>
+          </div>
+
+          <div class="bar-total">
+            <div class="total-label"><strong>Total</strong></div>
+            <div id="resumen-total" class="total-money">$ 0</div>
+          </div>
+
           <button id="btn-confirmar" disabled>Confirmar pedido</button>
         </div>
       </div>
