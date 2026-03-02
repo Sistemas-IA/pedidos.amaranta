@@ -37,7 +37,7 @@
       <div class="resumen-pane">
         <div id="resumen-list"></div>
 
-        <!-- ✅ Selector de pago integrado en la barra (evita “ocupar una fila” extra en desktop) -->
+        <!-- ✅ Barra con 2 filas: pago arriba, total+botón abajo -->
         <div class="bar">
           <div class="bar-pay" aria-label="Forma de pago">
             <div class="payselect-label">Forma de pago</div>
@@ -54,12 +54,14 @@
             </div>
           </div>
 
-          <div class="bar-total">
-            <div class="total-label"><strong>Total</strong></div>
-            <div id="resumen-total" class="total-money">$ 0</div>
-          </div>
+          <div class="bar-bottom">
+            <div class="bar-total">
+              <div class="total-label"><strong>Total</strong></div>
+              <div id="resumen-total" class="total-money">$ 0</div>
+            </div>
 
-          <button id="btn-confirmar" disabled>Confirmar pedido</button>
+            <button id="btn-confirmar" disabled>Confirmar pedido</button>
+          </div>
         </div>
       </div>
     </section>
@@ -71,7 +73,7 @@
       <div class="row">
         <div class="field" style="flex:1">
           <label for="dni">DNI</label>
-          <input id="dni" inputmode="numeric" pattern="\\d{7,8}" maxlength="8" placeholder="Tu DNI" />
+          <input id="dni" inputmode="numeric" pattern="\d{7,8}" maxlength="8" placeholder="Tu DNI" />
         </div>
         <div class="field" style="flex:1">
           <label for="clave">Clave</label>
