@@ -297,21 +297,73 @@
     els.alertModal.classList.add("hidden");
   }
 
-  // WhatsApp:
-  // - Guardar comprobante: wa.me/?text= (usuario elige chat / se lo manda a sí mismo)
-  // - Contacto operativo (si hay WA_PHONE_TARGET): wa.me/<target>?text=
-  function openWhatsAppText(text){
-    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    const w = window.open(url, "_blank", "noopener");
-    return !!w;
+  // WhatsApp
+  function isMobileDevice(){
+    const ua = navigator.userAgent || "";
+    return /Android|iPhone|iPad|iPod|Windows Phone|IEMobile|Opera Mini/i.test(ua)
+      || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
   }
-  function openWhatsAppTarget(text){
+
+  function buildWhatsAppUrls(text){
+    const enc = encodeURIComponent(text);
     const raw = String(state.config.WA_PHONE_TARGET || "").trim();
     const phone = raw.replace(/[^\d]/g, "");
-    if (!phone) return openWhatsAppText(text);
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-    const w = window.open(url, "_blank", "noopener");
-    return !!w;
+
+    if (phone) {
+      return {
+        app: `whatsapp://send?phone=${phone}&text=${enc}`,
+        mobileWeb: `https://wa.me/${phone}?text=${enc}`,
+        desktopWeb: `https://web.whatsapp.com/send?phone=${phone}&text=${enc}`,
+      };
+    }
+
+    return {
+      app: `whatsapp://send?text=${enc}`,
+      mobileWeb: `https://wa.me/?text=${enc}`,
+      desktopWeb: `https://web.whatsapp.com/send?text=${enc}`,
+    };
+  }
+
+  function openWhatsAppText(text){
+    return openWhatsAppTarget(text);
+  }
+
+  function openWhatsAppTarget(text){
+    const urls = buildWhatsAppUrls(text);
+
+    if (isMobileDevice()) {
+      let fallbackTimer = null;
+
+      const cleanup = () => {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+        if (fallbackTimer) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+      };
+
+      const onVisibilityChange = () => {
+        if (document.hidden) cleanup();
+      };
+
+      document.addEventListener("visibilitychange", onVisibilityChange);
+
+      fallbackTimer = setTimeout(() => {
+        cleanup();
+        if (!document.hidden) {
+          window.location.href = urls.mobileWeb;
+        }
+      }, 900);
+
+      window.location.href = urls.app;
+      return true;
+    }
+
+    const w = window.open(urls.desktopWeb, "_blank", "noopener");
+    if (w) return true;
+
+    window.location.href = urls.desktopWeb;
+    return true;
   }
 
   // ---- Config + Catálogo ----
@@ -732,22 +784,8 @@
           }
         } catch {}
 
-        const opened = openWhatsAppTarget(texto);
-
-        if (opened) {
-          toast(copied ? "Comprobante copiado ✓ Abriendo WhatsApp…" : "Abriendo WhatsApp…");
-          return;
-        }
-
-        if (copied) toast("Comprobante copiado ✓", true);
-
-        openAlertModal({
-          title: "No se pudo abrir WhatsApp",
-          msg:
-            "No se pudo abrir WhatsApp desde el navegador.\n\n" +
-            (copied ? "Ya copiamos el comprobante: abrí WhatsApp y pegalo.\n\n" : "Abrí WhatsApp y copialo manualmente.\n\n") +
-            "Tip: sacale una captura de pantalla a este comprobante.",
-        });
+        openWhatsAppTarget(texto);
+        toast(copied ? "Comprobante copiado ✓ Abriendo WhatsApp…" : "Abriendo WhatsApp…");
       };
     }
   }
