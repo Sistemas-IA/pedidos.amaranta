@@ -465,7 +465,7 @@ textarea{ resize:vertical; min-height:72px; }
   /* 2 columnas siempre y filas con mínimo (evita “aplastado”) */
   #catalogo.grid{
     grid-template-columns:repeat(2, 1fr) !important;
-    grid-auto-rows:minmax(320px, auto);
+    grid-auto-rows:minmax(260px, auto);
   }
 
   /* Derecha: header arriba + carrito abajo */
